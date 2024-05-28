@@ -116,7 +116,8 @@ WHERE 1 = 1
 
 
 /*
-Ultimate query: This query to associate Defect tickets to each enhancement ticket:
+Ultimate query: This query to associate Defect tickets to each enhancement ticket.
+Note that, these records only includes the enhancement ticket that has at least one bug count. Not include tickets with zero bug count.
 */
 WITH EnhancementTicketQuery AS (
     SELECT 
@@ -195,7 +196,8 @@ JoinedQuery AS (
 )
 
 -- Add the row_count column and filter by date comparison
-SELECT --DISTINCT
+SELECT 
+	DISTINCT
     j.Enhancement_Ticket_ID,
     ----j.Enhancement_Type,
     --j.Enhancement_Commit_Date,
@@ -203,7 +205,7 @@ SELECT --DISTINCT
     --j.Function_Name,
     --j.Enhancement_File_Change_Status,
     --j.Defect_File_Change_Status,
-    j.Defect_Ticket_ID,
+    --j.Defect_Ticket_ID,
     ----j.Defect_Type,
     --j.Defect_Commit_Date,
     COUNT(j.Defect_Ticket_ID) OVER (PARTITION BY j.Enhancement_Ticket_ID) AS Bug_Count
