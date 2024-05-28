@@ -116,8 +116,7 @@ WHERE 1 = 1
 
 
 /*
-Ultimate query: This query to associate Defect tickets to each enhancement ticket.
-Note that, these records only includes the enhancement ticket that has at least one bug count. Not include tickets with zero bug count.
+Ultimate query: This query output associate Defect tickets to each enhancement ticket based on file name and function name.
 */
 WITH EnhancementTicketQuery AS (
     SELECT 
@@ -177,12 +176,12 @@ JoinedQuery AS (
         e.Ticket_ID AS Enhancement_Ticket_ID,
         e.Ticket_Type AS Enhancement_Type,
         e.Ticket_Created_On AS Enhancement_Ticket_Created_On,
-        e.File_Name,
-        e.Function_Name,
+        e.File_Name AS Enhancement_File_Name,
+        e.Function_Name AS Enhancement_Function_Name,
         e.File_Change_Status AS Enhancement_File_Change_Status,
         e.Date AS Enhancement_Commit_Date,
-		--d.File_Name AS Defect_File_Name,
-		--d.Function_Name AS Defect_Function_Name,
+		d.File_Name AS Defect_File_Name,
+		d.Function_Name AS Defect_Function_Name,
         d.Ticket_ID AS Defect_Ticket_ID,
         d.Ticket_Type AS Defect_Type,
         d.Ticket_Created_On AS Defect_Ticket_Created_On,
@@ -193,24 +192,39 @@ JoinedQuery AS (
     INNER JOIN 
         DefectTicketQuery d ON e.File_Name = d.File_Name 
                            AND e.Function_Name = d.Function_Name
-)
+						   AND CONVERT(datetime2, SUBSTRING(e.Date, 6, 20)) < CONVERT(datetime2, SUBSTRING(d.Date, 6, 20))
 
--- Add the row_count column and filter by date comparison
-SELECT 
-	DISTINCT
-    j.Enhancement_Ticket_ID,
-    ----j.Enhancement_Type,
-    --j.Enhancement_Commit_Date,
-    --j.File_Name,
-    --j.Function_Name,
-    --j.Enhancement_File_Change_Status,
-    --j.Defect_File_Change_Status,
-    --j.Defect_Ticket_ID,
-    ----j.Defect_Type,
-    --j.Defect_Commit_Date,
-    COUNT(j.Defect_Ticket_ID) OVER (PARTITION BY j.Enhancement_Ticket_ID) AS Bug_Count
-FROM 
-    JoinedQuery j
-WHERE 
-    CONVERT(datetime2, SUBSTRING(j.Enhancement_Commit_Date, 6, 20)) < CONVERT(datetime2, SUBSTRING(j.Defect_Commit_Date, 6, 20)) -- Only includes if Enhancement_Date < Defect_Date
-ORDER BY j.Enhancement_Ticket_ID DESC;
+
+/* Query to output all the functions associated between enhance and defect tickets. Each row represents each function. Again, do not includes enhancement ticket with zero bug counts.
+)
+SELECT
+    Enhancement_Ticket_ID
+    --,Enhancement_Type
+    --,Enhancement_Ticket_Created_On
+    ,Enhancement_File_Name AS File_Name
+    ,Enhancement_Function_Name AS Function_Name
+    --,Enhancement_File_Change_Status
+    ,Enhancement_Commit_Date
+	--,Defect_File_Name
+	--,Defect_Function_Name
+    ,Defect_Ticket_ID
+    --,Defect_Type
+    --,Defect_Ticket_Created_On
+    --,Defect_File_Change_Status
+FROM JoinedQuery
+order by Enhancement_Ticket_ID desc;
+--*/
+
+------------------------------------------------------------------------------------------------------------
+
+--/* This is the correct parts to get Enhancement ticket with number of bug count.
+),
+DistinctQuery AS (
+	SELECT DISTINCT Enhancement_Ticket_ID, Defect_Ticket_ID
+	FROM JoinedQuery
+)
+Select DISTINCT Enhancement_Ticket_ID,
+COUNT(Defect_Ticket_ID) OVER (PARTITION BY Enhancement_Ticket_ID) AS Bug_Count
+from DistinctQuery
+order by Enhancement_Ticket_ID desc;
+--*/
