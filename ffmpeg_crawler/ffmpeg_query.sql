@@ -9,7 +9,7 @@
 ** Dev issues:
 	- Query:
 		select ff.*
-		FROM FFmpreg_Commit_Diff cd
+		FROM FFmpeg_Commit_Diff cd
 		INNER JOIN FFmpeg_Functions ff ON ff.File_Prev_Index = cd.File_Prev_Index
 			AND ff.File_Index = cd.File_Index
 		WHERE 1 = 1
@@ -44,15 +44,15 @@ and [Resolution] ='fixed' --More reliable field than Status=closed
 and [Hash_ID] is not null;
 
 select count(distinct ticket_id)
-from FFmpreg_Commit_Diff;
+from FFmpeg_Commit_Diff;
 
 
-select top 10 * from FFmpreg_Commit_Diff
+select top 10 * from FFmpeg_Commit_Diff
 where ticket_id=9502
 order by inserted_on desc;
 
 /*
- * TODO: This query get all the relevant id and hash_id exists in 'FFmpeg', but not in 'FFmpreg_Commit_Diff'.
+ * TODO: This query get all the relevant id and hash_id exists in 'FFmpeg', but not in 'FFmpeg_Commit_Diff'.
  * Therefore, we need to go through each of these records and understand why the commit doesn't have any file names.
  * Could be: Merge conflict or values are not has id.
 */
@@ -63,15 +63,15 @@ AND [Resolution] = 'fixed'
 AND [Hash_ID] IS NOT NULL
 AND ID NOT IN (
     SELECT DISTINCT ticket_id
-    FROM FFmpreg_Commit_Diff
+    FROM FFmpeg_Commit_Diff
 );
 
 /*
-Get distinct FFmpreg_Commit_Diff record's indices if their indices do not exists in FFmpeg_Functions table.
+Get distinct FFmpeg_Commit_Diff record's indices if their indices do not exists in FFmpeg_Functions table.
 This query shows which commit files have not been processed to extract function names.
 */
 SELECT distinct c.*
-FROM FFmpreg_Commit_Diff AS c
+FROM FFmpeg_Commit_Diff AS c
 LEFT JOIN FFmpeg_Functions AS f
     ON c.File_Prev_Index = f.File_Prev_Index
     AND c.File_Index = f.File_Index
@@ -90,7 +90,7 @@ SELECT cd.Ticket_Id
 	,ff.Function_Name
 	,ff.File_Change_Status
 	,cd.*
-FROM FFmpreg_Commit_Diff cd
+FROM FFmpeg_Commit_Diff cd
 INNER JOIN FFmpeg_Functions ff ON ff.File_Prev_Index = cd.File_Prev_Index
 	AND ff.File_Index = cd.File_Index
 WHERE 1 = 1
@@ -100,7 +100,7 @@ ORDER BY cd.ticket_id DESC
 	,ff.File_Change_Status ASC;
 
 /*
-update FFmpreg_Commit_Diff
+update FFmpeg_Commit_Diff
 set Function_Name='test_fill_picture'
 where File_Name='libavfilter/vsrc_testsrc.c' and Ticket_Id='10989' and Function_Name='e'
 */
@@ -108,7 +108,7 @@ where File_Name='libavfilter/vsrc_testsrc.c' and Ticket_Id='10989' and Function_
 /**/
 
 select ff.*
-FROM FFmpreg_Commit_Diff cd
+FROM FFmpeg_Commit_Diff cd
 INNER JOIN FFmpeg_Functions ff ON ff.File_Prev_Index = cd.File_Prev_Index
 	AND ff.File_Index = cd.File_Index
 WHERE 1 = 1
