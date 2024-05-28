@@ -140,7 +140,7 @@ WITH EnhancementTicketQuery AS (
         AND FFmpeg.Resolution = 'fixed'
         AND FFmpeg.Hash_ID IS NOT NULL
         AND FFmpeg.Component <> 'documentation'
-		--AND FFmpeg.ID = '10066'
+		--AND FFmpeg.ID = '896'
         AND (FFmpeg_functions.File_Change_Status = 'modified' 
              OR FFmpeg_functions.File_Change_Status = 'added')
 ),
