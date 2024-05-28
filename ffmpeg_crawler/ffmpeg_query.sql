@@ -211,6 +211,7 @@ SELECT
     --,Defect_Type
     --,Defect_Ticket_Created_On
     --,Defect_File_Change_Status
+	,Defect_Commit_Date
 FROM JoinedQuery
 order by Enhancement_Ticket_ID desc;
 --*/
