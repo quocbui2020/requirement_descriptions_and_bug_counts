@@ -5,20 +5,36 @@
 - Only include on .c files, not yet other files.
 - Not include .c file with weird function names.
 - We need to consider that the bug fixes datetime must be greater than the 'enhancement' tickets.
-*/
 
-select ID, Hash_ID from FFmpeg
-where 1=1
-and [Status]='closed' --Have different resolution values
-and [Resolution] ='fixed' --More reliable field than Status=closed
-and [Hash_ID] is not null
---and Component <> 'documentation' --Just documentation, not code
---and [Description] is null
---and [Description] not like '%{{{%}}}%' 
---and [Description] not like '%http%' 
---and LEN([Description]) >= 6 --Description has at least 6 characters or above
---and id='11001'
-order by id asc;
+** Dev issues:
+	- Query:
+		select ff.*
+		FROM FFmpreg_Commit_Diff cd
+		INNER JOIN FFmpeg_Functions ff ON ff.File_Prev_Index = cd.File_Prev_Index
+			AND ff.File_Index = cd.File_Index
+		WHERE 1 = 1
+			and cd.File_Name='libavfilter/vsrc_testsrc.c' and Ticket_Id='10989' and Function_Name='zoneplate_fill_picture'
+	- Didn't capture all the function name and wrong name sometimes.
+
+Useful web links:
+- https://trac.ffmpeg.org/query?max=655&order=id&status=closed&col=id&col=description&resolution=fixed&type=enhancement&format=csv
+- https://git.ffmpeg.org/gitweb/ffmpeg.git/commitdiff/{hash_id}
+- https://git.ffmpeg.org/gitweb/ffmpeg.git/blob_plain/{file_index}
+*/
+SELECT *
+FROM FFmpeg
+WHERE 1 = 1
+	AND [Type] = 'enhancement'
+	AND [Status] = 'closed' --Have different resolution values
+	AND [Resolution] = 'fixed' --More reliable field than Status=closed
+	AND [Hash_ID] IS NOT NULL
+	AND Component <> 'documentation' --Just documentation, not code
+	--AND [Description] IS NOT NULL
+	--AND [Description] NOT LIKE '%{{{%}}}%'
+	--AND [Description] NOT LIKE '%http%'
+	--AND LEN([Description]) >= 6 --Description has at least 6 characters or above
+	--AND id = '11001'
+ORDER BY id ASC;
 
 
 select count(ID) from FFmpeg
@@ -50,9 +66,11 @@ AND ID NOT IN (
     FROM FFmpreg_Commit_Diff
 );
 
--- Get distinct FFmpreg_Commit_Diff record's indices if their indices do not exists in FFmpeg_Functions table:
---SELECT DISTINCT c.[File_Prev_Index], c.[File_Index]
-SELECT c.*
+/*
+Get distinct FFmpreg_Commit_Diff record's indices if their indices do not exists in FFmpeg_Functions table.
+This query shows which commit files have not been processed to extract function names.
+*/
+SELECT distinct c.*
 FROM FFmpreg_Commit_Diff AS c
 LEFT JOIN FFmpeg_Functions AS f
     ON c.File_Prev_Index = f.File_Prev_Index
@@ -64,7 +82,133 @@ WHERE f.File_Prev_Index IS NULL
 	--AND c.File_Index= '0000000000'
 ORDER By c.File_Prev_Index ASC;
 
+/*
+Query show all function names and statuses
+*/
+SELECT cd.Ticket_Id
+	,cd.File_Name
+	,ff.Function_Name
+	,ff.File_Change_Status
+	,cd.*
+FROM FFmpreg_Commit_Diff cd
+INNER JOIN FFmpeg_Functions ff ON ff.File_Prev_Index = cd.File_Prev_Index
+	AND ff.File_Index = cd.File_Index
+WHERE 1 = 1
+	and cd.File_Name='libavfilter/vsrc_testsrc.c' and Ticket_Id='10989'
+ORDER BY cd.ticket_id DESC
+	,cd.File_Name ASC
+	,ff.File_Change_Status ASC;
 
-select *
-from FFmpreg_Commit_Diff cd
-inner join FFmpeg_Functions ff on ff.File_Prev_Index = cd.File_Prev_Index and ff.File_Index = cd.File_Index
+/*
+update FFmpreg_Commit_Diff
+set Function_Name='test_fill_picture'
+where File_Name='libavfilter/vsrc_testsrc.c' and Ticket_Id='10989' and Function_Name='e'
+*/
+
+/**/
+
+select ff.*
+FROM FFmpreg_Commit_Diff cd
+INNER JOIN FFmpeg_Functions ff ON ff.File_Prev_Index = cd.File_Prev_Index
+	AND ff.File_Index = cd.File_Index
+WHERE 1 = 1
+	and cd.File_Name='libavfilter/vsrc_testsrc.c' and Ticket_Id='10989' and Function_Name='zoneplate_fill_picture'
+
+
+/*
+Ultimate query: This query to associate Defect tickets to each enhancement ticket:
+*/
+WITH EnhancementTicketQuery AS (
+    SELECT 
+        FFmpeg.ID as Ticket_ID,
+        FFmpeg.Type as Ticket_Type,
+        FFmpeg.Ticket_Created_On,
+        FFmpeg_Commit_Diff.File_Name,
+        FFmpeg_functions.Function_Name,
+        FFmpeg_functions.File_Change_Status,
+        FFmpeg_Commit_Diff.Date AS Date
+    FROM 
+        FFmpeg
+    INNER JOIN 
+        FFmpeg_Commit_Diff ON FFmpeg_Commit_Diff.Ticket_ID = FFmpeg.ID
+    INNER JOIN 
+        FFmpeg_functions ON FFmpeg_functions.File_Index = FFmpeg_Commit_Diff.File_Index 
+                         AND FFmpeg_functions.File_Prev_Index = FFmpeg_Commit_Diff.File_Prev_Index 
+    WHERE 
+        FFmpeg.Type = 'enhancement'
+        AND FFmpeg.Status = 'closed'
+        AND FFmpeg.Resolution = 'fixed'
+        AND FFmpeg.Hash_ID IS NOT NULL
+        AND FFmpeg.Component <> 'documentation'
+		--AND FFmpeg.ID = '10066'
+        AND (FFmpeg_functions.File_Change_Status = 'modified' 
+             OR FFmpeg_functions.File_Change_Status = 'added')
+),
+
+DefectTicketQuery AS (
+    SELECT 
+        FFmpeg.ID as Ticket_ID,
+        FFmpeg.Type as Ticket_Type,
+        FFmpeg.Ticket_Created_On,
+        FFmpeg_Commit_Diff.File_Name,
+        FFmpeg_functions.Function_Name,
+        FFmpeg_functions.File_Change_Status,
+        FFmpeg_Commit_Diff.Date AS Date
+    FROM 
+        FFmpeg
+    INNER JOIN 
+        FFmpeg_Commit_Diff ON FFmpeg_Commit_Diff.Ticket_ID = FFmpeg.ID
+    INNER JOIN 
+        FFmpeg_functions ON FFmpeg_functions.File_Index = FFmpeg_Commit_Diff.File_Index 
+                         AND FFmpeg_functions.File_Prev_Index = FFmpeg_Commit_Diff.File_Prev_Index 
+    WHERE 
+        FFmpeg.Type = 'defect'
+        AND FFmpeg.Status = 'closed'
+        AND FFmpeg.Resolution = 'fixed'
+        AND FFmpeg.Hash_ID IS NOT NULL
+        AND FFmpeg.Component <> 'documentation'
+        AND (FFmpeg_functions.File_Change_Status = 'modified' 
+             OR FFmpeg_functions.File_Change_Status = 'deleted')
+),
+
+JoinedQuery AS (
+    SELECT 
+        e.Ticket_ID AS Enhancement_Ticket_ID,
+        e.Ticket_Type AS Enhancement_Type,
+        e.Ticket_Created_On AS Enhancement_Ticket_Created_On,
+        e.File_Name,
+        e.Function_Name,
+        e.File_Change_Status AS Enhancement_File_Change_Status,
+        e.Date AS Enhancement_Commit_Date,
+		--d.File_Name AS Defect_File_Name,
+		--d.Function_Name AS Defect_Function_Name,
+        d.Ticket_ID AS Defect_Ticket_ID,
+        d.Ticket_Type AS Defect_Type,
+        d.Ticket_Created_On AS Defect_Ticket_Created_On,
+        d.File_Change_Status AS Defect_File_Change_Status,
+        d.Date AS Defect_Commit_Date
+    FROM 
+        EnhancementTicketQuery e
+    INNER JOIN 
+        DefectTicketQuery d ON e.File_Name = d.File_Name 
+                           AND e.Function_Name = d.Function_Name
+)
+
+-- Add the row_count column and filter by date comparison
+SELECT --DISTINCT
+    j.Enhancement_Ticket_ID,
+    ----j.Enhancement_Type,
+    --j.Enhancement_Commit_Date,
+    --j.File_Name,
+    --j.Function_Name,
+    --j.Enhancement_File_Change_Status,
+    --j.Defect_File_Change_Status,
+    j.Defect_Ticket_ID,
+    ----j.Defect_Type,
+    --j.Defect_Commit_Date,
+    COUNT(j.Defect_Ticket_ID) OVER (PARTITION BY j.Enhancement_Ticket_ID) AS Bug_Count
+FROM 
+    JoinedQuery j
+WHERE 
+    CONVERT(datetime2, SUBSTRING(j.Enhancement_Commit_Date, 6, 20)) < CONVERT(datetime2, SUBSTRING(j.Defect_Commit_Date, 6, 20)) -- Only includes if Enhancement_Date < Defect_Date
+ORDER BY j.Enhancement_Ticket_ID DESC;
