@@ -1,5 +1,4 @@
 import requests
-from datetime import datetime
 from prettytable import PrettyTable
 from bs4 import BeautifulSoup
 import logging
@@ -10,13 +9,30 @@ import traceback
 import re
 import time
 import pandas as pd
-import pyodbc
+import numpy as np
+
+#statsmodels-0.14.2
+import statsmodels.api as sm 
+from statsmodels.stats.outliers_influence import variance_inflation_factor
+
+from scipy import stats
+import seaborn as sns #seaborn-0.13.2 (Aim for data visualization)
+import matplotlib.pyplot as plt #matplotlib-3.9.0
+#scikit-learn-1.5.0
+from sklearn.decomposition import PCA
+from sklearn.model_selection import train_test_split, GridSearchCV #scikit-learn-1.5.0
+from sklearn.linear_model import LinearRegression, Ridge, LogisticRegression
+from sklearn.metrics import mean_squared_error, r2_score, roc_curve, auc, roc_auc_score
+
 import csv
 from datetime import datetime
 import sys
 import threading
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pydriller import Repository
+import spacy
+from collections import Counter
+
 
 # Set the desired recursion limit
 sys.setrecursionlimit(10**6)
@@ -24,7 +40,7 @@ sys.setrecursionlimit(10**6)
 # Increase CSV field size limit
 csv.field_size_limit(10**7)  # Setting to 10 million characters
 
-# Connect to the database
+# Connection string
 conn_str = 'DRIVER={ODBC Driver 18 for SQL Server};' \
            'SERVER=QUOCBUI\\SQLEXPRESS;' \
            'DATABASE=ResearchDatasets;' \
@@ -58,6 +74,121 @@ BEGIN
     INSERT INTO [dbo].[FFmpeg_Functions] ([File_Prev_Index], [File_Index], [Function_Name], [File_Change_Status])
     VALUES (?, ?, ?, ?);
 END
+'''
+
+insert_ffmpeg_statistical_measurement = '''INSERT INTO [dbo].[FFmpeg_Statistical_Measurements]
+            ([Ticket_ID]
+           ,[version]
+           ,[flesch_kincaid_reading_ease]
+           ,[flesch_kincaid_grade_level]
+           ,[gunning_fog_score]
+           ,[smog_index]
+           ,[coleman_liau_index]
+           ,[automated_readability_index]
+           ,[number_of_words]
+           ,[number_of_complex_words]
+           ,[average_grade_level]
+           ,[Number_Of_Predicates])
+        VALUES
+            (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'''
+
+select_ticket_description = '''
+WITH EnhancementTicketQuery AS (
+    SELECT 
+        FFmpeg.ID as Ticket_ID,
+        FFmpeg.Type as Ticket_Type,
+		FFmpeg.Summary,
+		FFmpeg.Description_Original,
+		FFmpeg.Description_Without_SigNonNL,
+		FFmpeg.Characters_Removed_Percentage,
+		FFmpeg.Is_Contain_SigNonNL,
+        FFmpeg.Ticket_Created_On,
+        FFmpeg_Commit_Diff.File_Name,
+        FFmpeg_functions.Function_Name,
+        FFmpeg_functions.File_Change_Status,
+        FFmpeg_Commit_Diff.Date AS Date
+    FROM 
+        FFmpeg
+    INNER JOIN 
+        FFmpeg_Commit_Diff ON FFmpeg_Commit_Diff.Ticket_ID = FFmpeg.ID
+    INNER JOIN 
+        FFmpeg_functions ON FFmpeg_functions.File_Index = FFmpeg_Commit_Diff.File_Index 
+                         AND FFmpeg_functions.File_Prev_Index = FFmpeg_Commit_Diff.File_Prev_Index 
+    WHERE 
+        FFmpeg.Type = 'enhancement'
+        AND FFmpeg.Status = 'closed'
+        AND FFmpeg.Resolution = 'fixed'
+        AND FFmpeg.Hash_ID IS NOT NULL
+        AND FFmpeg.Component <> 'documentation'
+        AND (FFmpeg_functions.File_Change_Status = 'modified' 
+             OR FFmpeg_functions.File_Change_Status = 'added')
+),
+
+DefectTicketQuery AS (
+    SELECT 
+        FFmpeg.ID as Ticket_ID,
+        FFmpeg.Type as Ticket_Type,
+        FFmpeg.Ticket_Created_On,
+        FFmpeg_Commit_Diff.File_Name,
+        FFmpeg_functions.Function_Name,
+        FFmpeg_functions.File_Change_Status,
+        FFmpeg_Commit_Diff.Date AS Date
+    FROM 
+        FFmpeg
+    INNER JOIN 
+        FFmpeg_Commit_Diff ON FFmpeg_Commit_Diff.Ticket_ID = FFmpeg.ID
+    INNER JOIN 
+        FFmpeg_functions ON FFmpeg_functions.File_Index = FFmpeg_Commit_Diff.File_Index 
+                         AND FFmpeg_functions.File_Prev_Index = FFmpeg_Commit_Diff.File_Prev_Index 
+    WHERE 
+        FFmpeg.Type = 'defect'
+        AND FFmpeg.Status = 'closed'
+        AND FFmpeg.Resolution = 'fixed'
+        AND FFmpeg.Hash_ID IS NOT NULL
+        AND FFmpeg.Component <> 'documentation'
+        AND (FFmpeg_functions.File_Change_Status = 'modified' 
+             OR FFmpeg_functions.File_Change_Status = 'deleted')
+),
+
+JoinedQuery AS (
+    SELECT 
+        e.Ticket_ID AS Enhancement_Ticket_ID,
+        e.Ticket_Type AS Enhancement_Type,
+        e.Ticket_Created_On AS Enhancement_Ticket_Created_On,
+        e.File_Name AS Enhancement_File_Name,
+        e.Function_Name AS Enhancement_Function_Name,
+        e.File_Change_Status AS Enhancement_File_Change_Status,
+        e.Date AS Enhancement_Commit_Date,
+		e.Summary,
+		e.Description_Original,
+		e.Description_Without_SigNonNL,
+		e.Characters_Removed_Percentage,
+		e.Is_Contain_SigNonNL,
+		d.File_Name AS Defect_File_Name,
+		d.Function_Name AS Defect_Function_Name,
+        d.Ticket_ID AS Defect_Ticket_ID,
+        d.Ticket_Type AS Defect_Type,
+        d.Ticket_Created_On AS Defect_Ticket_Created_On,
+        d.File_Change_Status AS Defect_File_Change_Status,
+        d.Date AS Defect_Commit_Date
+    FROM 
+        EnhancementTicketQuery e
+    LEFT JOIN 
+        DefectTicketQuery d ON e.File_Name = d.File_Name 
+                           AND e.Function_Name = d.Function_Name
+						   AND CONVERT(datetime2, SUBSTRING(e.Date, 6, 20)) < CONVERT(datetime2, SUBSTRING(d.Date, 6, 20))
+),
+DistinctQuery AS (
+	SELECT DISTINCT Enhancement_Ticket_ID, Defect_Ticket_ID, Summary, Description_Original, Description_Without_SigNonNL, Characters_Removed_Percentage, Is_Contain_SigNonNL
+	FROM JoinedQuery
+)
+Select distinct
+Enhancement_Ticket_ID
+,Description_Original
+,Description_Without_SigNonNL
+from DistinctQuery
+where 1=1
+order by Enhancement_Ticket_ID asc;
 '''
 
 global global_max
@@ -725,10 +856,12 @@ def insert_ffmpeg_functions(prev_file_index, curr_file_index):
         conn = pyodbc.connect(conn_str)
         cursor = conn.cursor()
         
+        #Eixsting file has been removed:
         if curr_file_index == '0000000000':
             deleted_functions = extract_function_names_and_implementations_c_code(';' + remove_comments_c_file(get_c_file_content(prev_file_index)))
             for name, _ in deleted_functions:
                 cursor.execute(insert_ffmpeg_function_query, (prev_file_index, curr_file_index, name, prev_file_index, curr_file_index, name, 'deleted'))
+        #File is created:
         elif prev_file_index == '0000000000':
             added_functions = extract_function_names_and_implementations_c_code(';' + remove_comments_c_file(get_c_file_content(curr_file_index)))
             for name, _ in added_functions:
@@ -812,6 +945,7 @@ def get_c_file_content(file_index):
         print(f"Error fetching file content for index {file_index}: {e}")
         return None
 
+
 ###########################################################################################
 ## Real Run ##
 # c_file_commit_diff = get_c_file_indices_from_commit_diff()
@@ -821,41 +955,32 @@ def get_c_file_content(file_index):
 #     insert_ffmpeg_functions(prev_file_index, curr_file_index)
 #     print("Done")
 
-# insert_ffmpeg_functions('68a8ea31f1', 'b4107ac873') # Just testing single commit
+ #insert_ffmpeg_functions('68a8ea31f1', 'b4107ac873') # Just testing single commit
 
 
 
 
+# # Define a function to process each tuple in c_file_commit_diff
+# def process_tuple(tuple_data):
+#     prev_file_index, curr_file_index, _ = tuple_data
+#     print(f"Progressing index: ({prev_file_index}, {curr_file_index})...", end="", flush=True)
+#     insert_ffmpeg_functions(prev_file_index, curr_file_index)
+#     print("Done")
 
+# # Get the c_file_commit_diff data
+# c_file_commit_diff = get_c_file_indices_from_commit_diff()
 
+# # Create a ThreadPoolExecutor with a maximum of, for example, 5 threads
+# with ThreadPoolExecutor(max_workers=1) as executor:
+#     # Submit tasks for each tuple in c_file_commit_diff
+#     futures = [executor.submit(process_tuple, tuple_data) for tuple_data in c_file_commit_diff]
 
-
-
-
-
-
-
-# Define a function to process each tuple in c_file_commit_diff
-def process_tuple(tuple_data):
-    prev_file_index, curr_file_index, _ = tuple_data
-    print(f"Progressing index: ({prev_file_index}, {curr_file_index})...", end="", flush=True)
-    insert_ffmpeg_functions(prev_file_index, curr_file_index)
-    print("Done")
-
-# Get the c_file_commit_diff data
-c_file_commit_diff = get_c_file_indices_from_commit_diff()
-
-# Create a ThreadPoolExecutor with a maximum of, for example, 5 threads
-with ThreadPoolExecutor(max_workers=1) as executor:
-    # Submit tasks for each tuple in c_file_commit_diff
-    futures = [executor.submit(process_tuple, tuple_data) for tuple_data in c_file_commit_diff]
-
-    # Wait for all tasks to complete
-    for future in as_completed(futures):
-        try:
-            future.result()  # Get the result of each task (this will propagate any exceptions)
-        except Exception as e:
-            print(f"An error occurred: {e}")
+#     # Wait for all tasks to complete
+#     for future in as_completed(futures):
+#         try:
+#             future.result()  # Get the result of each task (this will propagate any exceptions)
+#         except Exception as e:
+#             print(f"An error occurred: {e}")
 
 
 
@@ -868,8 +993,166 @@ with ThreadPoolExecutor(max_workers=1) as executor:
 
 ###########################################################################################
 ## Test extract_function_names_and_implementations_c_code function ##
-# file_content = ''';
-# '''
+file_content = ''';
+
+#include "config_components.h"
+
+static void draw_digit(int digit, uint8_t *dst, ptrdiff_t dst_linesize,
+                       int segment_width)
+{
+#define TOP_HBAR        1
+#define MID_HBAR        2
+#define BOT_HBAR        4
+#define LEFT_TOP_VBAR   8
+#define LEFT_BOT_VBAR  16
+#define RIGHT_TOP_VBAR 32
+#define RIGHT_BOT_VBAR 64
+    struct segments {
+        int x, y, w, h;
+    } segments[] = {
+        { 1,  0, 5, 1 }, /* TOP_HBAR */
+        { 1,  6, 5, 1 }, /* MID_HBAR */
+        { 1, 12, 5, 1 }, /* BOT_HBAR */
+        { 0,  1, 1, 5 }, /* LEFT_TOP_VBAR */
+        { 0,  7, 1, 5 }, /* LEFT_BOT_VBAR */
+        { 6,  1, 1, 5 }, /* RIGHT_TOP_VBAR */
+        { 6,  7, 1, 5 }  /* RIGHT_BOT_VBAR */
+    };
+    static const unsigned char masks[10] = {
+        /* 0 */ TOP_HBAR         |BOT_HBAR|LEFT_TOP_VBAR|LEFT_BOT_VBAR|RIGHT_TOP_VBAR|RIGHT_BOT_VBAR,
+        /* 1 */                                                        RIGHT_TOP_VBAR|RIGHT_BOT_VBAR,
+        /* 2 */ TOP_HBAR|MID_HBAR|BOT_HBAR|LEFT_BOT_VBAR                             |RIGHT_TOP_VBAR,
+        /* 3 */ TOP_HBAR|MID_HBAR|BOT_HBAR                            |RIGHT_TOP_VBAR|RIGHT_BOT_VBAR,
+        /* 4 */          MID_HBAR         |LEFT_TOP_VBAR              |RIGHT_TOP_VBAR|RIGHT_BOT_VBAR,
+        /* 5 */ TOP_HBAR|BOT_HBAR|MID_HBAR|LEFT_TOP_VBAR                             |RIGHT_BOT_VBAR,
+        /* 6 */ TOP_HBAR|BOT_HBAR|MID_HBAR|LEFT_TOP_VBAR|LEFT_BOT_VBAR               |RIGHT_BOT_VBAR,
+        /* 7 */ TOP_HBAR                                              |RIGHT_TOP_VBAR|RIGHT_BOT_VBAR,
+        /* 8 */ TOP_HBAR|BOT_HBAR|MID_HBAR|LEFT_TOP_VBAR|LEFT_BOT_VBAR|RIGHT_TOP_VBAR|RIGHT_BOT_VBAR,
+        /* 9 */ TOP_HBAR|BOT_HBAR|MID_HBAR|LEFT_TOP_VBAR              |RIGHT_TOP_VBAR|RIGHT_BOT_VBAR,
+    };
+    unsigned mask = masks[digit];
+    int i;
+
+    draw_rectangle(0, dst, dst_linesize, segment_width, 0, 0, 8, 13);
+    for (i = 0; i < FF_ARRAY_ELEMS(segments); i++)
+        if (mask & (1<<i))
+            draw_rectangle(255, dst, dst_linesize, segment_width,
+                           segments[i].x, segments[i].y, segments[i].w, segments[i].h);
+}
+
+#define GRADIENT_SIZE (6 * 256)
+
+static void test_fill_picture(AVFilterContext *ctx, AVFrame *frame)
+{
+    TestSourceContext *test = ctx->priv;
+    uint8_t *p, *p0;
+    int x, y;
+    int color, color_rest;
+    int icolor;
+    int radius;
+    int quad0, quad;
+    int dquad_x, dquad_y;
+    int grad, dgrad, rgrad, drgrad;
+    int seg_size;
+    int second;
+    int i;
+    uint8_t *data = frame->data[0];
+    int width  = frame->width;
+    int height = frame->height;
+
+    /* draw colored bars and circle */
+    radius = (width + height) / 4;
+    quad0 = width * width / 4 + height * height / 4 - radius * radius;
+    dquad_y = 1 - height;
+    p0 = data;
+    for (y = 0; y < height; y++) {
+        p = p0;
+        color = 0;
+        color_rest = 0;
+        quad = quad0;
+        dquad_x = 1 - width;
+        for (x = 0; x < width; x++) {
+            icolor = color;
+            if (quad < 0)
+                icolor ^= 7;
+            quad += dquad_x;
+            dquad_x += 2;
+            *(p++) = icolor & 1 ? 255 : 0;
+            *(p++) = icolor & 2 ? 255 : 0;
+            *(p++) = icolor & 4 ? 255 : 0;
+            color_rest += 8;
+            if (color_rest >= width) {
+                color_rest -= width;
+                color++;
+            }
+        }
+        quad0 += dquad_y;
+        dquad_y += 2;
+        p0 += frame->linesize[0];
+    }
+
+    /* draw sliding color line */
+    p0 = p = data + frame->linesize[0] * (height * 3/4);
+    grad = (256 * test->nb_frame * test->time_base.num / test->time_base.den) %
+        GRADIENT_SIZE;
+    rgrad = 0;
+    dgrad = GRADIENT_SIZE / width;
+    drgrad = GRADIENT_SIZE % width;
+    for (x = 0; x < width; x++) {
+        *(p++) =
+            grad < 256 || grad >= 5 * 256 ? 255 :
+            grad >= 2 * 256 && grad < 4 * 256 ? 0 :
+            grad < 2 * 256 ? 2 * 256 - 1 - grad : grad - 4 * 256;
+        *(p++) =
+            grad >= 4 * 256 ? 0 :
+            grad >= 1 * 256 && grad < 3 * 256 ? 255 :
+            grad < 1 * 256 ? grad : 4 * 256 - 1 - grad;
+        *(p++) =
+            grad < 2 * 256 ? 0 :
+            grad >= 3 * 256 && grad < 5 * 256 ? 255 :
+            grad < 3 * 256 ? grad - 2 * 256 : 6 * 256 - 1 - grad;
+        grad += dgrad;
+        rgrad += drgrad;
+        if (rgrad >= GRADIENT_SIZE) {
+            grad++;
+            rgrad -= GRADIENT_SIZE;
+        }
+        if (grad >= GRADIENT_SIZE)
+            grad -= GRADIENT_SIZE;
+    }
+    p = p0;
+    for (y = height / 8; y > 0; y--) {
+        memcpy(p+frame->linesize[0], p, 3 * width);
+        p += frame->linesize[0];
+    }
+
+    /* draw digits */
+    seg_size = width / 80;
+    if (seg_size >= 1 && height >= 13 * seg_size) {
+        int64_t p10decimals = 1;
+        double time = av_q2d(test->time_base) * test->nb_frame *
+                      ff_exp10(test->nb_decimals);
+        if (time >= INT_MAX)
+            return;
+
+        for (x = 0; x < test->nb_decimals; x++)
+            p10decimals *= 10;
+
+        second = av_rescale_rnd(test->nb_frame * test->time_base.num, p10decimals, test->time_base.den, AV_ROUND_ZERO);
+        x = width - (width - seg_size * 64) / 2;
+        y = (height - seg_size * 13) / 2;
+        p = data + (x*3 + y * frame->linesize[0]);
+        for (i = 0; i < 8; i++) {
+            p -= 3 * 8 * seg_size;
+            draw_digit(second % 10, p, frame->linesize[0], seg_size);
+            second /= 10;
+            if (second == 0)
+                break;
+        }
+    }
+}
+#endif /* CONFIG_ZONEPLATE_FILTER */
+'''
 # functions = extract_function_names_and_implementations_c_code(file_content)
 # for function_name, implementation in functions:
 #     print("Function Name:", function_name)
@@ -878,3 +1161,749 @@ with ThreadPoolExecutor(max_workers=1) as executor:
 #     print("-----")
 
 ###########################################################################################
+
+
+###########################################################################################
+###########################################################################################
+###########################################################################################
+###########################################################################################
+###########################################################################################
+###########################################################################################
+###########################################################################################
+###########################################################################################
+###########################################################################################
+## Calculate the Readability Scores ##
+def post_url_readable_tool(text):
+    html_entities = ''.join([f'&#{ord(char)};' for char in text])
+    
+    # Define the URL and payload
+    url = 'https://www.webfx.com/tools/m/ra/check.php'
+    payload = {
+        'tab': 'Test by Direct Link',
+        'input': html_entities
+    }
+    
+    # Make the POST request
+    response = requests.post(url, data=payload)
+    if response.status_code != 200:
+        return None
+    
+    # Return the response content
+    return response.content
+
+def extract_readability_values(byte_content):
+    # Step 1: Decode byte content to string
+    content = byte_content.decode('utf-8')
+    
+    # Step 2: Extract `card-percent` values
+    card_percent_values = re.findall(r'class=\\"card-percent\\">([\d.-]+)<\\/p>', content)
+    card_percent_values = card_percent_values[:6]  # Get only the first 6 values
+
+    # Step 3: Extract `card-value` values
+    card_value_values = re.findall(r'class=\\"card-value\\">([\d.-]+)<\\/p>', content)
+    card_value_values = card_value_values[:6]  # Get only the first 6 values
+
+    # Combine both lists
+    values = card_percent_values + card_value_values
+
+    return values
+
+def insert_readability_measures_to_db(ticket_id, version, result_list):
+    try:
+        # Connect to the database
+        conn = pyodbc.connect(conn_str)
+        cursor = conn.cursor()
+        
+        # Extract values from the result list
+        flesch_kincaid_reading_ease = float(result_list[0])
+        flesch_kincaid_grade_level = float(result_list[1])
+        gunning_fog_score = float(result_list[2])
+        smog_index = float(result_list[3])
+        coleman_liau_index = float(result_list[4])
+        automated_readability_index = float(result_list[5])
+        number_of_words = int(result_list[7])
+        number_of_complex_words = int(result_list[8])
+        
+        # Calculate average grade level
+        average_grade_level = (
+            flesch_kincaid_grade_level + 
+            coleman_liau_index + 
+            smog_index + 
+            automated_readability_index + 
+            gunning_fog_score
+        ) / 5.0
+
+        # Insert the values into the database
+        cursor.execute(insert_ffmpeg_statistical_measurement, 
+                       ticket_id, version, flesch_kincaid_reading_ease, flesch_kincaid_grade_level, gunning_fog_score, 
+                       smog_index, coleman_liau_index, automated_readability_index, number_of_words, 
+                       number_of_complex_words, average_grade_level, None)
+
+        # Commit the transaction
+        conn.commit()
+        
+    except pyodbc.Error as e:
+        print(f"Database error: {e}")
+    finally:
+        # Close the cursor and connection
+        cursor.close()
+        conn.close()
+
+def get_ticket_descriptions_from_db():
+    try:
+        # Connect to the database
+        conn = pyodbc.connect(conn_str)
+        cursor = conn.cursor()
+        
+        # Execute the select query
+        cursor.execute(select_ticket_description)
+        
+        # Fetch all results
+        rows = cursor.fetchall()
+        
+        # Process the results into a list of dictionaries
+        result = []
+        for row in rows:
+            result.append((row.Enhancement_Ticket_ID, row.Description_Original, row.Description_Without_SigNonNL))
+        
+        return result
+    
+    except pyodbc.Error as e:
+        print(f"Database error: {e}")
+        return None
+    finally:
+        # Close the cursor and connection
+        cursor.close()
+        conn.close()
+
+###########################################################################################
+## This is the loop to obtain readability measures and store in FFmpeg_Statistical_Measurements:
+# list_of_records = get_ticket_descriptions_from_db()
+# for record in list_of_records:  
+#     ticket_id, description = record
+#     print(f"Processing ticket id {ticket_id}...", end="", flush=True)
+#     response_content = None
+#     if description != '' and description != None:
+#         response_content = post_url_readable_tool(description)
+#     if response_content != None:
+#         readability_scores = extract_readability_values(response_content)
+#         insert_readability_measures_to_db(ticket_id, 'Description_Without_SigNonNL', readability_scores)
+#         print("Done")
+#     else:
+#         print("Failed")
+
+###########################################################################################
+###########################################################################################
+###########################################################################################
+###########################################################################################
+###########################################################################################
+###########################################################################################
+###########################################################################################
+###########################################################################################
+###########################################################################################
+## Extract and save predicates of the text ##
+def extract_predicates(text):
+    nlp = spacy.load('en_core_web_sm')
+    # Process the text
+    doc = nlp(text)
+    predicates = []
+
+    for sent in doc.sents:
+        subject = ""
+        predicate = ""
+        for token in sent:
+            if token.dep_ == 'nsubj':
+                subject = token.text
+                predicate = ' '.join([tok.text for tok in token.head.subtree if tok.dep_ != 'nsubj'])
+                break
+        if predicate:
+            predicates.append((subject, predicate))
+
+    return predicates
+
+# count_predicates: count number of predicates.
+def count_predicates(predicates):
+    # Extract just the predicates from the subject-predicate pairs
+    predicate_list = [predicate for subject, predicate in predicates]
+    # Use Counter to count the occurrences of each predicate
+    predicate_counts = Counter(predicate_list)
+    # Return the number of unique predicates
+    num_of_predicates = len(predicate_counts)
+    return num_of_predicates
+
+def save_predicate_count_to_db(num_of_predicates, ticket_id, version):
+    try:
+        # Connect to the database
+        conn = pyodbc.connect(conn_str)
+        cursor = conn.cursor()
+        
+        # Execute the select query
+        update_predicate_query = '''
+            update FFmpeg_Statistical_Measurements
+            set Number_Of_Predicates = ?
+            where Ticket_ID= ? AND version = ? AND Number_Of_Predicates is null
+        '''
+        cursor.execute(update_predicate_query, (num_of_predicates, ticket_id, version))
+        conn.commit()
+    
+    except pyodbc.Error as e:
+        print(f"Database error: {e}")
+        return None
+    finally:
+        # Close the cursor and connection
+        cursor.close()
+        conn.close()
+
+###########################################################################################
+## Initiates processing predicates:
+# list_of_records = get_ticket_descriptions_from_db()
+# for record in list_of_records:  
+#     ticket_id, description = record
+#     print(f"Extract Predicates from ticket id {ticket_id}...", end="", flush=True)
+#     predicates = extract_predicates(description)
+#     num_of_predicates = count_predicates(predicates)
+#     save_predicate_count_to_db(num_of_predicates, ticket_id, "Description_Original")
+#     # save_predicate_count_to_db(num_of_predicates, ticket_id, "Description_Without_SigNonNL")
+#     print("Done")
+
+###########################################################################################
+###########################################################################################
+###########################################################################################
+###########################################################################################
+###########################################################################################
+###########################################################################################
+###########################################################################################
+###########################################################################################
+###########################################################################################
+## Process `Characters_Removed_Percentage` and `Is_Contain_SigNonNL` ##
+def save_characters_removed_percentage_in_db(ticket_id, original_description, cleaned_description):
+    len_original_description = len(original_description)
+    len_cleaned_description = len(cleaned_description)
+    char_rm_percentage = ((len_original_description - len_cleaned_description) / len_original_description) * 100
+
+    try:
+        # Connect to the database
+        conn = pyodbc.connect(conn_str)
+        cursor = conn.cursor()
+        
+        # Execute the select query
+        update_Characters_Removed_Percentage_query = '''
+            update FFmpeg
+            set Characters_Removed_Percentage = ?
+            where ID= ? AND Characters_Removed_Percentage is null
+        '''
+        cursor.execute(update_Characters_Removed_Percentage_query, (char_rm_percentage, ticket_id))
+        conn.commit()
+    
+    except pyodbc.Error as e:
+        print(f"Database error: {e}")
+        return None
+    finally:
+        # Close the cursor and connection
+        cursor.close()
+        conn.close()
+
+###########################################################################################
+## Initiates the process `Characters_Removed_Percentage`:
+# list_of_records = get_ticket_descriptions_from_db()
+# for record in list_of_records:
+#     ticket_id, description_orig, description_cleaned = record
+#     print(f"Process `Characters_Removed_Percentage` for ticket id {ticket_id}...", end="", flush=True)
+#     save_characters_removed_percentage_in_db(ticket_id, description_orig, description_cleaned)
+#     print("Done")
+
+###########################################################################################
+###########################################################################################
+###########################################################################################
+###########################################################################################
+###########################################################################################
+###########################################################################################
+###########################################################################################
+###########################################################################################
+###########################################################################################
+## Perform statistical analysis
+
+# call_stored_procedure_sp_GeFFmpegData: Execute stored procedure `sp_GeFFmpegData`:
+def call_stored_procedure_sp_GeFFmpegData(version, Characters_Removed_Percentage):
+    # Connect to the database
+    conn = pyodbc.connect(conn_str)
+    cursor = conn.cursor()
+    
+    # Execute the stored procedure
+    cursor.execute(f"EXEC sp_GetFFmpegData @version=N'{version}', @Characters_Removed_Percentage='{Characters_Removed_Percentage}'")
+    
+    # Fetch all rows from the executed stored procedure
+    rows = cursor.fetchall()
+    
+    # Get column names
+    columns = [column[0] for column in cursor.description]
+    
+    # Convert rows into a list of dictionaries
+    dataset = [dict(zip(columns, row)) for row in rows]
+    
+    # Close the cursor and connection
+    cursor.close()
+    conn.close()
+    
+    return dataset
+
+# 1. Perform correlation_analysis: Correlation Coeffient matrix:
+def correlation_analysis(data):
+    # Convert the data to a pandas DataFrame
+    df = pd.DataFrame(data)
+    
+    # Select the relevant columns for correlation analysis
+    columns = [
+        'Does_Contain_Any_Bug',
+        'flesch_kincaid_reading_ease',
+        'flesch_kincaid_grade_level',
+        #'gunning_fog_score',
+        #'smog_index',
+        'coleman_liau_index',
+        #'automated_readability_index',
+        'number_of_words',
+        'number_of_complex_words',
+        #'average_grade_level',
+        'Number_Of_Predicates',
+        #'Does_Contain_NonNL',
+        'Characters_Removed_Percentage'
+    ]
+    
+    # Subset the DataFrame to include only the relevant columns
+    df_subset = df[columns]
+    
+    # Calculate the correlation matrix
+    correlation_matrix = df_subset.corr()
+    
+    # Print the correlation matrix
+    print("Correlation Matrix:")
+    print(correlation_matrix)
+    
+    # Visualize the correlation matrix
+    plt.figure(figsize=(12, 10))
+    sns.heatmap(correlation_matrix, annot=True, cmap='coolwarm', vmin=-1, vmax=1)
+    plt.title('Correlation Matrix')
+    plt.show()
+    
+    return correlation_matrix
+
+# calculate_vif: Perform Variance Inflation Factor (VIF) to handle Multicollinearity
+def calculate_vif(data):
+    # Convert the data to a pandas DataFrame
+    df = pd.DataFrame(data)
+
+    # Define the independent variables
+    independent_vars = [
+        'flesch_kincaid_reading_ease',
+        'flesch_kincaid_grade_level',
+        'gunning_fog_score',
+        'smog_index',
+        'coleman_liau_index',
+        'automated_readability_index',
+        'number_of_words',
+        'number_of_complex_words',
+        'average_grade_level',
+        'Number_Of_Predicates'
+    ]
+
+    # Ensure the column names are correct
+    X = df[independent_vars]
+
+    # Add a constant term
+    X = sm.add_constant(X)
+    
+    # Calculate VIF for each variable
+    vif_data = pd.DataFrame()
+    vif_data["Feature"] = X.columns
+    vif_data["VIF"] = [variance_inflation_factor(X.values, i) for i in range(X.shape[1])]
+    
+    # Handle infinite VIFs
+    while vif_data["VIF"].max() > 10:  # You can adjust the threshold as needed
+        max_vif_feature = vif_data.loc[vif_data["VIF"].idxmax(), "Feature"]
+        print(f"Removing {max_vif_feature} due to high VIF")
+        if max_vif_feature == "const":
+            break
+        X = X.drop(columns=[max_vif_feature])
+        
+        vif_data = pd.DataFrame()
+        vif_data["Feature"] = X.columns
+        vif_data["VIF"] = [variance_inflation_factor(X.values, i) for i in range(X.shape[1])]
+    
+    return vif_data
+
+def remove_high_vif(data, threshold=10.0):
+    df = pd.DataFrame(data)
+    independent_vars = [
+        'flesch_kincaid_reading_ease',
+        'flesch_kincaid_grade_level',
+        'gunning_fog_score',
+        'smog_index',
+        'coleman_liau_index',
+        'automated_readability_index',
+        'number_of_words',
+        'number_of_complex_words',
+        'average_grade_level',
+        'Number_Of_Predicates'
+    ]
+    X = df[independent_vars]
+    X = sm.add_constant(X)
+    
+    while True:
+        vif_data = pd.DataFrame()
+        vif_data["Feature"] = X.columns
+        vif_data["VIF"] = [variance_inflation_factor(X.values, i) for i in range(X.shape[1])]
+        
+        max_vif = vif_data['VIF'].max()
+        if max_vif > threshold:
+            max_vif_feature = vif_data.loc[vif_data['VIF'].idxmax(), 'Feature']
+            print(f"Removing {max_vif_feature} due to high VIF of {max_vif}")
+            X = X.drop(columns=[max_vif_feature])
+        else:
+            break
+    
+    return X.columns.tolist()
+
+def multiple_linear_regression_full_data(data):
+    # Convert the data to a pandas DataFrame
+    df = pd.DataFrame(data)
+    
+    # Define the independent variables
+    independent_vars = [
+        'flesch_kincaid_reading_ease',
+        'flesch_kincaid_grade_level',
+        #'gunning_fog_score',
+        #'smog_index',
+        'coleman_liau_index',
+        #'automated_readability_index',
+        'number_of_words',
+        'number_of_complex_words',
+        #'average_grade_level',
+        'Number_Of_Predicates'
+    ]
+    
+    # Define the dependent variable
+    dependent_var = 'Bug_Count'
+    
+    # Prepare the data for regression
+    X = df[independent_vars]
+    y = df[dependent_var]
+    
+    # Add a constant term (intercept)
+    X = sm.add_constant(X)
+    
+    # Fit the model using statsmodels to get the summary statistics
+    model_stats = sm.OLS(y, X).fit()
+    
+    # Print the summary statistics
+    print(model_stats.summary())
+    
+    # Calculate predictions
+    y_pred = model_stats.predict(X)
+    
+    # Calculate performance metrics
+    mse = mean_squared_error(y, y_pred)
+    r_squared = r2_score(y, y_pred)
+    
+    print(f'Mean Squared Error: {mse}')
+    print(f'R-squared: {r_squared}')
+    
+    return model_stats
+
+# Combine between `multiple_linear_regression` and `multiple_linear_regression_sklearn` - It split data
+def multiple_linear_regression_split80_20(data):
+    # Convert the data to a pandas DataFrame
+    df = pd.DataFrame(data)
+    
+    # Define the independent variables
+    independent_vars = [
+        'flesch_kincaid_reading_ease',
+        #'flesch_kincaid_grade_level',
+        #'gunning_fog_score',
+        #'smog_index',
+        #'coleman_liau_index',
+        'automated_readability_index',
+        #'number_of_words',
+        'number_of_complex_words',
+        #'average_grade_level',
+        'Number_Of_Predicates'
+    ]
+    
+    # Define the dependent variable
+    dependent_var = 'Bug_Count'
+    
+    # Prepare the data for regression
+    X = df[independent_vars]
+    y = df[dependent_var]
+    
+    # Add a constant term
+    X = sm.add_constant(X)
+    
+    # Split the data into training and testing sets
+    X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
+    
+    # Fit the model using training data
+    model = LinearRegression()
+    model.fit(X_train, y_train)
+    
+    # Predict on the test data
+    y_pred = model.predict(X_test)
+    
+    # Calculate model performance metrics
+    mse = mean_squared_error(y_test, y_pred)
+    r2 = r2_score(y_test, y_pred)
+    
+    # Print model performance metrics
+    print("Mean Squared Error:", mse)
+    print("R-squared:", r2)
+    
+    # Use statsmodels to calculate the p-values and standard errors on the training set
+    model_stats = sm.OLS(y_train, X_train).fit()
+    
+    # Extracting the coefficients, standard errors, t-values, and p-values
+    coef = model_stats.params
+    std_err = model_stats.bse
+    t_values = model_stats.tvalues
+    p_values = model_stats.pvalues
+    
+    # Summary
+    summary = pd.DataFrame({
+        'Coefficient': coef,
+        'Standard Error': std_err,
+        't-Statistic': t_values,
+        'p-Value': p_values
+    })
+    
+    # Print summary
+    print(summary)
+    
+    return model
+
+# logistic_regression_analysis (Applied when independent vars is binary value)
+def logistic_regression_analysis_split_80_20(data):
+    # Convert the data to a pandas DataFrame
+    df = pd.DataFrame(data)
+    
+    # Define the independent variables
+    independent_vars = [
+        'flesch_kincaid_reading_ease',
+        'flesch_kincaid_grade_level',
+        #'gunning_fog_score',
+        #'smog_index',
+        'coleman_liau_index',
+        #'automated_readability_index',
+        'number_of_words',
+        'number_of_complex_words',
+        #'average_grade_level',
+        'Number_Of_Predicates'
+    ]
+    
+    # Define the dependent variable
+    dependent_var = 'Bug_Count'
+    
+    # Prepare the data for regression
+    X = df[independent_vars]
+    y = df[dependent_var]
+    
+    # Split the data into training and testing sets
+    X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
+    
+    # Create a logistic regression model
+    model = LogisticRegression()
+    
+    # Fit the model to the training data
+    model.fit(X_train, y_train)
+    
+    # Predict on the test data
+    y_pred = model.predict(X_test)
+    
+    # Calculate accuracy
+    accuracy = accuracy_score(y_test, y_pred)
+    
+    # Calculate confusion matrix
+    conf_matrix = confusion_matrix(y_test, y_pred)
+    
+    # Calculate classification report
+    class_report = classification_report(y_test, y_pred)
+    
+    # Print model performance metrics
+    print("Accuracy:", accuracy)
+    print("Confusion Matrix:\n", conf_matrix)
+    print("Classification Report:\n", class_report)
+    
+    # Print the coefficients
+    coeff_df = pd.DataFrame(model.coef_.flatten(), X.columns, columns=['Coefficient'])
+    print(coeff_df)
+    
+    return model
+
+
+#########################################################################
+
+
+# logistic_regression_analysis (Applied when independent vars is binary value)
+def logistic_regression_analysis_full_data(data):
+    # Convert the data to a pandas DataFrame
+    df = pd.DataFrame(data)
+    
+    # Define the independent variables
+    independent_vars = [
+        'flesch_kincaid_reading_ease',
+        'flesch_kincaid_grade_level',
+        #'gunning_fog_score',
+        #'smog_index',
+        'coleman_liau_index',
+        #'automated_readability_index',
+        'number_of_words',
+        'number_of_complex_words',
+        #'average_grade_level',
+        'Number_Of_Predicates',
+        #'Does_Contain_NonNL',
+        'Characters_Removed_Percentage'
+    ]
+    
+    # Convert independent variables to numeric and handle errors
+    for var in independent_vars:
+        df[var] = pd.to_numeric(df[var], errors='coerce')
+
+    # Define the dependent variable
+    dependent_var = 'Does_Contain_Any_Bug'
+    
+    # Prepare the data for regression
+    X = df[independent_vars]
+    y = df[dependent_var]
+    
+    # Add a constant term (intercept) to the model
+    X = sm.add_constant(X)
+    
+    # Fit the logistic regression model using statsmodels
+    logit_model = sm.Logit(y, X)
+    result = logit_model.fit()
+    
+    # Print the summary of the model
+    print(result.summary())
+    
+    return result
+
+# Plot ROC curve (Applied when independent vars is binary value)
+def plot_roc_curve(data):
+    # Convert the data to a pandas DataFrame
+    df = pd.DataFrame(data)
+    
+    # Define the independent variables
+    # Define the independent variables
+    independent_vars = [
+        'flesch_kincaid_reading_ease',
+        'flesch_kincaid_grade_level',
+        #'gunning_fog_score',
+        #'smog_index',
+        'coleman_liau_index',
+        #'automated_readability_index',
+        'number_of_words',
+        'number_of_complex_words',
+        #'average_grade_level',
+        'Number_Of_Predicates',
+        #'Does_Contain_NonNL',
+        'Characters_Removed_Percentage'
+    ]
+    
+    # Define the dependent variable
+    dependent_var = 'Does_Contain_Any_Bug'
+    
+    # Prepare the data for logistic regression
+    X = df[independent_vars]
+    y = df[dependent_var]
+    
+    # Fit logistic regression model
+    model = LogisticRegression()
+    model.fit(X, y)
+    
+    # Calculate ROC curve
+    fpr, tpr, thresholds = roc_curve(y, model.predict_proba(X)[:,1])
+    
+    # Calculate AUC
+    roc_auc = auc(fpr, tpr)
+    
+    # Plot ROC curve
+    plt.figure()
+    plt.plot(fpr, tpr, color='darkorange', lw=2, label='ROC curve (area = %0.2f)' % roc_auc)
+    plt.plot([0, 1], [0, 1], color='navy', lw=2, linestyle='--')
+    plt.xlim([0.0, 1.0])
+    plt.ylim([0.0, 1.05])
+    plt.xlabel('False Positive Rate')
+    plt.ylabel('True Positive Rate')
+    plt.title('Receiver Operating Characteristic')
+    plt.legend(loc="lower right")
+    plt.show()
+
+
+def compute_auc_for_each_predictor(data):
+    df = pd.DataFrame(data)
+    
+    # Define the independent variables
+    independent_vars = [
+        'flesch_kincaid_reading_ease',
+        'flesch_kincaid_grade_level',
+        #'gunning_fog_score',
+        #'smog_index',
+        'coleman_liau_index',
+        #'automated_readability_index',
+        'number_of_words',
+        'number_of_complex_words',
+        #'average_grade_level',
+        'Number_Of_Predicates',
+        #'Does_Contain_NonNL',
+        'Characters_Removed_Percentage'
+    ]
+    
+    # Define the dependent variable
+    dependent_var = 'Does_Contain_Any_Bug'
+    
+    # Prepare the data for analysis
+    X = df[independent_vars]
+    y = df[dependent_var]
+    
+    # Initialize an empty dictionary to store AUC values for each predictor
+    auc_values = {}
+    
+    # Fit a logistic regression model for each predictor individually and compute AUC
+    for predictor in independent_vars:
+        # Fit logistic regression model
+        model = LogisticRegression()
+        model.fit(X[[predictor]], y)
+        
+        # Predict probabilities
+        y_pred_proba = model.predict_proba(X[[predictor]])[:, 1]
+        
+        # Compute AUC
+        auc = roc_auc_score(y, y_pred_proba)
+        
+        # Store AUC value for the predictor
+        auc_values[predictor] = auc
+        
+    return auc_values
+
+
+###########################################################################################
+if __name__ == "__main__":
+    #dataset = call_stored_procedure_sp_GeFFmpegData(version='Description_Original', Characters_Removed_Percentage='99')
+    dataset = call_stored_procedure_sp_GeFFmpegData(version='Description_Without_SigNonNL', Characters_Removed_Percentage='99')
+    # dataset = call_stored_procedure_sp_GeFFmpegData(version='Description_Original', Characters_Removed_Percentage='0')
+    
+    correlation_matrix = correlation_analysis(dataset)
+    # vif_data = calculate_vif(dataset)
+    # selected_vars = remove_high_vif(dataset)
+    # print(f"\n\n***Selected variables after removing high VIF: {selected_vars}")
+    # print("\n\nMultiple_linear_regression_split80_20:")
+    # model = multiple_linear_regression_split80_20(dataset)
+    # print("\nMultiple_linear_regression_full_data:")
+    # model = multiple_linear_regression_full_data(dataset)
+
+    #Bug_Count is binary values:
+    print("\n\nLogistic_regression_analysis_full_data:")
+    model = logistic_regression_analysis_full_data(dataset)
+
+    print("\n\nCompute_auc_for_each_predictor:")
+    print(compute_auc_for_each_predictor(dataset))
+
+    print("\n\nPlot_roc_curve:")
+    model = plot_roc_curve(dataset)

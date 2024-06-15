@@ -1,6 +1,6 @@
 /* Note(s):
 - Code messages are embedded in {{{ }}}. Removed the records or just remove the non-english words?
-- What about descriptions contains links? Removed records or just remove non-english words?
+- What about Description_Originals contains links? Removed records or just remove non-english words?
 - Note, at the moment, no commit has .c file with `File_Index`=='0000000000', which means no .c file has been deleted
 - Only include on .c files, not yet other files.
 - Not include .c file with weird function names.
@@ -17,7 +17,7 @@
 	- Didn't capture all the function name and wrong name sometimes.
 
 Useful web links:
-- https://trac.ffmpeg.org/query?max=655&order=id&status=closed&col=id&col=description&resolution=fixed&type=enhancement&format=csv
+- https://trac.ffmpeg.org/query?max=655&order=id&status=closed&col=id&col=Description_Original&resolution=fixed&type=enhancement&format=csv
 - https://git.ffmpeg.org/gitweb/ffmpeg.git/commitdiff/{hash_id}
 - https://git.ffmpeg.org/gitweb/ffmpeg.git/blob_plain/{file_index}
 */
@@ -29,10 +29,10 @@ WHERE 1 = 1
 	AND [Resolution] = 'fixed' --More reliable field than Status=closed
 	AND [Hash_ID] IS NOT NULL
 	AND Component <> 'documentation' --Just documentation, not code
-	--AND [Description] IS NOT NULL
-	--AND [Description] NOT LIKE '%{{{%}}}%'
-	--AND [Description] NOT LIKE '%http%'
-	--AND LEN([Description]) >= 6 --Description has at least 6 characters or above
+	--AND [Description_Original] IS NOT NULL
+	--AND [Description_Original] NOT LIKE '%{{{%}}}%'
+	--AND [Description_Original] NOT LIKE '%http%'
+	--AND LEN([Description_Original]) >= 6 --Description_Original has at least 6 characters or above
 	--AND id = '11001'
 ORDER BY id ASC;
 
@@ -122,6 +122,11 @@ WITH EnhancementTicketQuery AS (
     SELECT 
         FFmpeg.ID as Ticket_ID,
         FFmpeg.Type as Ticket_Type,
+		FFmpeg.Summary,
+		FFmpeg.Description_Original,
+		FFmpeg.Description_Without_SigNonNL,
+		FFmpeg.Characters_Removed_Percentage,
+		FFmpeg.Is_Contain_SigNonNL,
         FFmpeg.Ticket_Created_On,
         FFmpeg_Commit_Diff.File_Name,
         FFmpeg_functions.Function_Name,
@@ -140,7 +145,6 @@ WITH EnhancementTicketQuery AS (
         AND FFmpeg.Resolution = 'fixed'
         AND FFmpeg.Hash_ID IS NOT NULL
         AND FFmpeg.Component <> 'documentation'
-		--AND FFmpeg.ID = '896'
         AND (FFmpeg_functions.File_Change_Status = 'modified' 
              OR FFmpeg_functions.File_Change_Status = 'added')
 ),
@@ -180,6 +184,11 @@ JoinedQuery AS (
         e.Function_Name AS Enhancement_Function_Name,
         e.File_Change_Status AS Enhancement_File_Change_Status,
         e.Date AS Enhancement_Commit_Date,
+		e.Summary,
+		e.Description_Original,
+		e.Description_Without_SigNonNL,
+		e.Characters_Removed_Percentage,
+		e.Is_Contain_SigNonNL,
 		d.File_Name AS Defect_File_Name,
 		d.Function_Name AS Defect_Function_Name,
         d.Ticket_ID AS Defect_Ticket_ID,
@@ -189,11 +198,10 @@ JoinedQuery AS (
         d.Date AS Defect_Commit_Date
     FROM 
         EnhancementTicketQuery e
-    INNER JOIN 
+    LEFT JOIN 
         DefectTicketQuery d ON e.File_Name = d.File_Name 
                            AND e.Function_Name = d.Function_Name
-						   AND CONVERT(datetime2, SUBSTRING(e.Date, 6, 20)) < CONVERT(datetime2, SUBSTRING(d.Date, 6, 20))
-
+						   AND CONVERT(datetime2, SUBSTRING(e.Date, 6, 20)) < CONVERT(datetime2, SUBSTRING(d.Date, 6, 20)) -- Includes records only if enhancement's commit date < defect's commit date.
 
 /* Query to output all the functions associated between enhance and defect tickets. Each row represents each function. Again, do not includes enhancement ticket with zero bug counts.
 )
@@ -201,10 +209,10 @@ SELECT
     Enhancement_Ticket_ID
     --,Enhancement_Type
     --,Enhancement_Ticket_Created_On
+    ,Enhancement_Commit_Date
     ,Enhancement_File_Name AS File_Name
     ,Enhancement_Function_Name AS Function_Name
     --,Enhancement_File_Change_Status
-    ,Enhancement_Commit_Date
 	--,Defect_File_Name
 	--,Defect_Function_Name
     ,Defect_Ticket_ID
@@ -221,11 +229,28 @@ order by Enhancement_Ticket_ID desc;
 --/* This is the correct parts to get Enhancement ticket with number of bug count.
 ),
 DistinctQuery AS (
-	SELECT DISTINCT Enhancement_Ticket_ID, Defect_Ticket_ID
+	SELECT DISTINCT Enhancement_Ticket_ID, Defect_Ticket_ID, Summary, Description_Original, Description_Without_SigNonNL, Characters_Removed_Percentage, Is_Contain_SigNonNL
 	FROM JoinedQuery
 )
-Select DISTINCT Enhancement_Ticket_ID,
-COUNT(Defect_Ticket_ID) OVER (PARTITION BY Enhancement_Ticket_ID) AS Bug_Count
-from DistinctQuery
-order by Enhancement_Ticket_ID desc;
+SELECT DISTINCT Enhancement_Ticket_ID
+	,fsm.version
+	--,Description_Original
+	--,Description_Without_SigNonNL
+	,Characters_Removed_Percentage
+	,Is_Contain_SigNonNL
+	,COUNT(Defect_Ticket_ID) OVER (PARTITION BY Enhancement_Ticket_ID) AS Bug_Count
+	,fsm.flesch_kincaid_reading_ease
+	,fsm.flesch_kincaid_grade_level
+	,fsm.gunning_fog_score
+	,fsm.smog_index
+	,fsm.coleman_liau_index
+	,fsm.automated_readability_index
+	,fsm.number_of_words
+	,fsm.number_of_complex_words
+	,fsm.average_grade_level
+	,fsm.Number_Of_Predicates
+FROM DistinctQuery
+INNER JOIN FFmpeg_Statistical_Measurements fsm ON fsm.Ticket_ID = DistinctQuery.Enhancement_Ticket_ID
+WHERE 1 = 1
+ORDER BY Enhancement_Ticket_ID ASC;
 --*/
