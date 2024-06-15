@@ -17,10 +17,7 @@ import traceback
 import re
 import time
 
-#TODO: If the request failed (Could be due to large context Code status: 502 Bad Gateway), then logged and reduce the size of the limit. And try again
-#TODO: The code is good for now. In the future, we can write code to validate links and exclusively get all the links from all comments.
-
-logging.basicConfig(level=logging.INFO, filename=f"C:\\Users\\quocb\\Quoc Bui\\Study\\phd_in_cs\\Research\\first_paper\\Code\\r_to_b_mapping\\data_and_loggers\\log_notes\\logger_{strftime('%Y%m%d_%H-%M-%S', localtime())}.log", filemode='w', format='%(levelname)s-%(message)s')
+logging.basicConfig(level=logging.INFO, filename=f"C:\\Users\\quocb\\Quoc Bui\\Study\\phd_in_cs\\Research\\first_paper\\Code\\r_to_b_mapping\\bugzilla\\logs\\logger_{strftime('%Y%m%d_%H-%M-%S', localtime())}.log", filemode='w', format='%(levelname)s-%(message)s')
 
 # Connect to the database
 conn = pyodbc.connect('DRIVER={ODBC Driver 18 for SQL Server};'
@@ -33,19 +30,20 @@ conn = pyodbc.connect('DRIVER={ODBC Driver 18 for SQL Server};'
 # Prepare the SQL query
 create_bugzilla_query = '''INSERT INTO [dbo].[Bugzilla]
             ([id]
-            ,[bug_title]
-            ,[product]
-            ,[component]
-            ,[type]
-            ,[status]
-            ,[resolution]
-            ,[bug_description]
-            ,[user_story]
-            ,[cf_last_resolved_utc]
-            ,[changeset_links]
-            ,[Note])
+           ,[bug_title]
+           ,[alias]
+           ,[product]
+           ,[component]
+           ,[type]
+           ,[status]
+           ,[resolution]
+           ,[resolved_comment_datetime]
+           ,[bug_description]
+           ,[user_story]
+           ,[changeset_links]
+           ,[inserted_on])
         VALUES
-            (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, null)'''
+            (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, SYSUTCDATETIME())'''
 create_bugzilla_error_log_query = '''INSERT INTO [dbo].[Bugzilla_Error_Log]
             ([ID]
            ,[Bug_ID]
@@ -54,9 +52,10 @@ create_bugzilla_error_log_query = '''INSERT INTO [dbo].[Bugzilla_Error_Log]
            ,[Detail_Error_Message]
            ,[Offset]
            ,[Limit]
-           ,[Completed])
+           ,[Completed]
+           ,[inserted_on])
         VALUES
-            (NEWID(), ?, ?, ?, ?, ?, ?, 0)'''
+            (NEWID(), ?, ?, ?, ?, ?, ?, 0, SYSUTCDATETIME())'''
 
 create_api_call_log_query = '''INSERT INTO [dbo].[API_Call_Log]
             ([Request_Url]
@@ -72,7 +71,7 @@ global global_bug_request_url
 
 def get_bug_url(offset, limit):
     base_url = "https://bugzilla.mozilla.org/rest/bug"
-    request_url = base_url + "?offset=" + str(offset) + "&limit=" + str(limit) + "&order=bug_id ASC&bug_id_type=nowords&bug_id=0&include_fields=cf_last_resolved,description,type,product,id,cf_user_story,resolution,status,comments.creation_time,comments.raw_text,comments.count,summary,component"
+    request_url = base_url + "?offset=" + str(offset) + "&limit=" + str(limit) + "&order=bug_id ASC&bug_id_type=nowords&bug_id=0&include_fields=cf_last_resolved,description,type,product,id,cf_user_story,resolution,status,comments.creation_time,comments.raw_text,comments.count,summary,component,alias"
     request_url = request_url + ",history.when,history.changes" # History: Remove this
     return request_url
 
@@ -173,6 +172,9 @@ def create_bugzilla(bug, changeset_urls, resolved_comment_time_string):
     bug_type = bug['type']
     bug_title = bug['summary']
     bug_component = bug['component']
+    status = bug['status']
+    resolution = bug['resolution']
+    alias = bug.get('alias', None)
 
     if bug['cf_user_story'] == "":
         bug['cf_user_story'] = None
@@ -182,15 +184,12 @@ def create_bugzilla(bug, changeset_urls, resolved_comment_time_string):
         bug['description'] = None
     bug_description: str = bug['description'] # Quoc: Fix this issue
 
-    status = bug['status']
-    resolution = bug['resolution']
-
     if resolved_comment_time_string == "":
         resolved_comment_time_string = None
 
     # Execute the query with parameterized values
     #encode_utf8_bug_description = bug_description.encode('utf-8')
-    cursor.execute(create_bugzilla_query, (bug_id, bug_title, product, bug_component, bug_type, status, resolution, bug_description, user_story, resolved_comment_time_string, changeset_urls))
+    cursor.execute(create_bugzilla_query, (bug_id, bug_title, alias, product, bug_component, bug_type, status, resolution, resolved_comment_time_string, bug_description, user_story, changeset_urls))
     
     # Commit changes and close cursor/connection
     conn.commit()
@@ -208,9 +207,9 @@ def create_api_call_log(request_url, is_success):
     conn.commit()
     cursor.close()
 
-def get_bugzilla_count():
+def get_bugzilla_count(start_id, end_id):
     cursor = conn.cursor()
-    cursor.execute("SELECT COUNT(id) FROM bugzilla")
+    cursor.execute(f"SELECT COUNT(id) FROM bugzilla where id >= 475363 and id <= 950725")
     return cursor.fetchone()[0]
 
 def get_resolved_comment_datetime(bug):
@@ -295,10 +294,11 @@ def ExtractBugChangesetLink(bug, resolved_comment_time_string):
 ###########################################################################################
 
 errorCount = 0
-global_offset = get_bugzilla_count() #start id
+crawler_offset = 464887
+global_offset = get_bugzilla_count() + crawler_offset
 global_limit = 1200
 
-for x in range(0,1):
+for x in range(0,999):
     print(f"\n{str(x+1)}.Current offset value: {global_offset} | Current time: {strftime('%m/%d/%Y %H:%M:%S', localtime())}")
     print(f"{str(x+1)}.Processing offset ranges:[" + str(global_offset) + "-" + str(global_offset + global_limit) + "]")
 
@@ -307,7 +307,7 @@ for x in range(0,1):
         errorCount += 1
     else:
         errorCount = 0
-    global_offset = get_bugzilla_count()
+    global_offset = get_bugzilla_count() + crawler_offset
 
 print(f"\nCompleted: Bugzilla Crawler Executed.\n")
 conn.close()
