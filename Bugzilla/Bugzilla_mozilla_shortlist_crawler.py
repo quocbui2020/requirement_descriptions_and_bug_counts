@@ -1,3 +1,6 @@
+# Note, at this moment, we set backed_out_by=null. After finished crawling through all the shortlogs, we will update 'backed_out_by' field based on the commit's datetime as well.
+
+
 import requests
 from datetime import datetime
 from prettytable import PrettyTable
@@ -10,28 +13,28 @@ import traceback
 import re
 import time
 
-# Connect to the database
-conn = pyodbc.connect('DRIVER={ODBC Driver 18 for SQL Server};'
-                        'SERVER=QUOCBUI\SQLEXPRESS;'
-                        'DATABASE=ResearchDatasets;'
-                        'LongAsMax=yes;'
-                        'TrustServerCertificate=yes;'
-                        'Trusted_Connection=yes;')
+# Connection string
+conn_str = 'DRIVER={ODBC Driver 18 for SQL Server};' \
+           'SERVER=QUOCBUI\\SQLEXPRESS;' \
+           'DATABASE=ResearchDatasets;' \
+           'LongAsMax=yes;' \
+           'TrustServerCertificate=yes;' \
+           'Trusted_Connection=yes;'
 
 # Prepare the SQL queries:
 insert_bugzilla_mozilla_shortlog_query = '''INSERT INTO [dbo].[Bugzilla_Mozilla_ShortLog]
             ([Hash_Id]
-           ,[Commit_Title] --Quoc: change this column to `Commit_Summary`
+           ,[Commit_Summary]
            ,[Bug_Ids]
            ,[Changeset_Links]
            ,[Mercurial_Type]
+           ,[Changeset_Datetime]
            ,[Is_Backed_Out_Commit]
            ,[Backed_Out_By]
            ,[Does_Required_Human_Inspection]
            ,[Inserted_On])
-           --Quoc: Added another column 'changeset_datetime'
         VALUES
-            (?, ?, ?, ?, ?, ?, ?, ?, SYSUTCDATETIME())'''
+            (?, ?, ?, ?, ?, ?, ?, ?, ?, SYSUTCDATETIME())'''
 
 create_bugzilla_error_log_query = '''INSERT INTO [dbo].[Bugzilla_Error_Log]
             ([ID]
@@ -124,12 +127,66 @@ def crawl_mozilla_central_shortlog(hash_id, max_retries=5):
 
     return changeset_info_list, next_hash
 
+# save_shortlog_to_db: 
+def save_shortlog_to_db(changeset_info):
+    global conn_str, insert_bugzilla_mozilla_shortlog_query
+
+    # Connect to the database
+    conn = pyodbc.connect(conn_str)
+    cursor = conn.cursor()
+    
+    try:
+        # Iterate over 'changeset_info'
+        for record in changeset_info:
+            # Extract values from the record
+            hash_id = record['hash_id']
+            commit_summary = record['commit_summary']
+            bug_ids = record['bug_ids'] if record['bug_ids'] else ''
+            changeset_link = record['changeset_link']
+            mercurial_type = "mozilla-central"
+            changeset_datetime = record['changeset_datetime']
+            is_backed_out_commit = int(record['Is_Backed_Out_Commit'])
+            backed_out_by = None
+            does_required_human_inspection = int(record['Does_Required_Human_Inspection'])
+
+            # Execute the SQL query per record in the changeset_info
+            cursor.execute(insert_bugzilla_mozilla_shortlog_query, 
+                           hash_id, 
+                           commit_summary, 
+                           bug_ids, 
+                           changeset_link, 
+                           mercurial_type, 
+                           changeset_datetime,
+                           is_backed_out_commit, 
+                           backed_out_by, 
+                           does_required_human_inspection)
+        
+        # Commit the transaction
+        conn.commit()
+    
+    except Exception as e:
+        # Handle any exceptions
+        print(f"Error: {e}")
+    
+    finally:
+        # Close the cursor and connection
+        cursor.close()
+        conn.close()
 
 ######################################################################
-if __name__ = "__main__":
+if __name__ == "__main__":
     # Example usage
-    url = "5559cc25760716b15bf6649eb227e04fb151a265"
-    changeset_info, next_hash = crawl_mozilla_central_shortlog(url)
+    hash_id = "tip"
+    changeset_info, next_hash = crawl_mozilla_central_shortlog(hash_id)
     for info in changeset_info:
         print(info)
     print(f"Next hash: {next_hash}")
+
+    # Real run:
+    next_hash = "tip"
+    while True:
+        changeset_info, next_hash = crawl_mozilla_central_shortlog(next_hash)
+        save_shortlog_to_db(changeset_info)
+        if next_hash == "no_next_hash":
+            break
+        
