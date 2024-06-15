@@ -1,0 +1,125 @@
+{
+	"info": {
+		"_postman_id": "33c1864c-0e85-4924-b3ba-0881a9aec75c",
+		"name": "FFmpreg",
+		"schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json",
+		"_exporter_id": "17974996"
+	},
+	"item": [
+		{
+			"name": "Optimal query to get the list of tickets so far",
+			"request": {
+				"method": "GET",
+				"header": [],
+				"url": {
+					"raw": "https://trac.ffmpeg.org/query?max=655&order=id&status=closed&col=id&col=description&resolution=fixed&type=enhancement&format=csv",
+					"protocol": "https",
+					"host": [
+						"trac",
+						"ffmpeg",
+						"org"
+					],
+					"path": [
+						"query"
+					],
+					"query": [
+						{
+							"key": "max",
+							"value": "655"
+						},
+						{
+							"key": "page",
+							"value": "2",
+							"disabled": true
+						},
+						{
+							"key": "order",
+							"value": "id"
+						},
+						{
+							"key": "status",
+							"value": "closed"
+						},
+						{
+							"key": "status",
+							"value": "new",
+							"disabled": true
+						},
+						{
+							"key": "status",
+							"value": "open",
+							"disabled": true
+						},
+						{
+							"key": "status",
+							"value": "reopened",
+							"disabled": true
+						},
+						{
+							"key": "col",
+							"value": "id"
+						},
+						{
+							"key": "col",
+							"value": "summary",
+							"disabled": true
+						},
+						{
+							"key": "col",
+							"value": "type",
+							"disabled": true
+						},
+						{
+							"key": "col",
+							"value": "component",
+							"disabled": true
+						},
+						{
+							"key": "col",
+							"value": "status",
+							"disabled": true
+						},
+						{
+							"key": "col",
+							"value": "resolution",
+							"disabled": true
+						},
+						{
+							"key": "col",
+							"value": "priority",
+							"disabled": true
+						},
+						{
+							"key": "col",
+							"value": "description"
+						},
+						{
+							"key": "col",
+							"value": "time",
+							"description": "Ticket_Created_On",
+							"disabled": true
+						},
+						{
+							"key": "col",
+							"value": "changetime",
+							"disabled": true
+						},
+						{
+							"key": "resolution",
+							"value": "fixed"
+						},
+						{
+							"key": "type",
+							"value": "enhancement"
+						},
+						{
+							"key": "format",
+							"value": "csv"
+						}
+					]
+				}
+			},
+			"response": []
+		}
+	]
+}
