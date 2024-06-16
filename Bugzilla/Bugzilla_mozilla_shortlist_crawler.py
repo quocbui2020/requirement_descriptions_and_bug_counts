@@ -1,6 +1,4 @@
 # Note, at this moment, we set backed_out_by=null. After finished crawling through all the shortlogs, we will update 'backed_out_by' field based on the commit's datetime as well.
-
-
 import requests
 from datetime import datetime
 from prettytable import PrettyTable
