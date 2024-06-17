@@ -54,11 +54,13 @@ WHERE (
 	AND resolution = 'FIXED'
 
 
-
+--------------------------------------------------
 --------------------------------------------------
 /* CRAWLING FOR CHANGESET_LINKS (ONLY HG LINKS) */
 --------------------------------------------------
---8 processese: [0, 
+--------------------------------------------------
+
+--TODO: Divide into 8 processes
 /* Get unprocessed records of crawling for changeset links */
 --SELECT count(id)
 SELECT id, potential_hashes, changeset_links
@@ -71,8 +73,17 @@ AND (
 	AND potential_hashes LIKE '%FINISHED_CHANGESET_HASHES_CRAWLING |'
 	)
 AND (changeset_links is null OR changeset_links not like '%FINISHED_CHANGESET_LINKS_CRAWLING |')
-AND (id >= 1898531 AND id <= 1901531)
+--AND (id >= 0 AND id <= 1000)
 ORDER BY id desc; 
+
+--------------------------------------------------
+--------------------------------------------------
+/* CRAWLING FOR COMMIT LISTS (ONLY MOZILLA CENTRAL FOR NOW) */
+--------------------------------------------------
+--------------------------------------------------
+select * from Bugzilla_Mozilla_ShortLog;
+--delete from Bugzilla_Mozilla_ShortLog;
+
 
 ----------------------------------------------------------------------------------------------
 ----------------------------------------------------------------------------------------------
