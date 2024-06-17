@@ -54,6 +54,10 @@ WHERE (
 	AND resolution = 'FIXED'
 
 
+
+
+
+
 --------------------------------------------------
 --------------------------------------------------
 /* CRAWLING FOR CHANGESET_LINKS (ONLY HG LINKS) */
@@ -76,13 +80,42 @@ AND (changeset_links is null OR changeset_links not like '%FINISHED_CHANGESET_LI
 --AND (id >= 0 AND id <= 1000)
 ORDER BY id desc; 
 
+
+
+
+
+
 --------------------------------------------------
 --------------------------------------------------
 /* CRAWLING FOR COMMIT LISTS (ONLY MOZILLA CENTRAL FOR NOW) */
 --------------------------------------------------
 --------------------------------------------------
-select * from Bugzilla_Mozilla_ShortLog;
+
+select count(*) from Bugzilla_Mozilla_ShortLog;
 --delete from Bugzilla_Mozilla_ShortLog;
+
+
+
+
+
+
+
+--------------------------------------------------
+--------------------------------------------------
+/* CRAWLING FOR CHANGESET PARENT CHILD HASHES IN EACH CHANGESET (IGNORE BACKED OUT BUGS AND BACKED OUT CHANGESETS */
+--------------------------------------------------
+--------------------------------------------------
+--TODO: Process of changeset links found in the comments as well.
+
+-- Obtains list of changeset record to process from Bugzilla_Mozilla_ShortLog:
+SELECT hash_id,Bug_Ids FROM Bugzilla_Mozilla_ShortLog
+WHERE (Backed_Out_By IS NULL OR Backed_Out_By = '')
+AND (Bug_Ids IS NOT NULL AND Bug_Ids <> '' AND Bug_Ids <> '0')
+ORDER BY Bug_Ids ASC
+OFFSET 0 ROWS --offset
+FETCH NEXT 10 ROWS ONLY; --limit
+
+
 
 
 ----------------------------------------------------------------------------------------------
