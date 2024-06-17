@@ -108,17 +108,20 @@ select count(*) from Bugzilla_Mozilla_ShortLog;
 --TODO: Process of changeset links found in the comments as well.
 
 -- Obtains list of changeset record to process from Bugzilla_Mozilla_ShortLog:
-SELECT hash_id,Bug_Ids FROM Bugzilla_Mozilla_ShortLog
+	-- Each 'hash_id' could have multiple bug ids. So, if the bug is not 'fixed', then don't consider.
+SELECT hash_id, Bug_Ids 
+FROM Bugzilla_Mozilla_ShortLog
+--JOIN Bugzilla ON
 WHERE (Backed_Out_By IS NULL OR Backed_Out_By = '')
-AND (Bug_Ids IS NOT NULL AND Bug_Ids <> '' AND Bug_Ids <> '0')
+	AND (Bug_Ids IS NOT NULL AND Bug_Ids <> '' AND Bug_Ids <> '0')
+	--AND Bug_Ids like '%1799002%'
+	--AND Hash_Id='b9a4318d5c1f7c10d48cd0f49849fbd159ae623d'
+	AND Is_Backed_Out_Commit = 1
 ORDER BY Bug_Ids ASC
 OFFSET 0 ROWS --offset
 FETCH NEXT 10 ROWS ONLY; --limit
 
-
-
-
-----------------------------------------------------------------------------------------------
+--------------------------------------------------------------------------------------- -------
 ----------------------------------------------------------------------------------------------
 /* WORKING AREA */
 
