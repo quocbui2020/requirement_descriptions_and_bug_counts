@@ -11,10 +11,7 @@ import re
 import time
 import argparse
 
-#TODO: If the request failed (Could be due to large context Code status: 502 Bad Gateway), then logged and reduce the size of the limit. And try again
-#TODO: The code is good for now. In the future, we can write code to validate links and exclusively get all the links from all comments.
-
-logging.basicConfig(level=logging.INFO, filename=f"C:\\Users\\quocb\\Quoc Bui\\Study\\phd_in_cs\\Research\\first_paper\\Code\\r_to_b_mapping\\bugzilla\\logs\\changeset_hashes_crawler_logger_{strftime('%Y%m%d_%H-%M-%S', localtime())}.log", filemode='w', format='%(levelname)s-%(message)s')
+#logging.basicConfig(level=logging.INFO, filename=f"C:\\Users\\quocb\\Quoc Bui\\Study\\phd_in_cs\\Research\\first_paper\\Code\\r_to_b_mapping\\bugzilla\\logs\\changeset_hashes_crawler_logger_{strftime('%Y%m%d_%H-%M-%S', localtime())}.log", filemode='w', format='%(levelname)s-%(message)s')
 
 # Connection string
 conn_str = 'DRIVER={ODBC Driver 18 for SQL Server};' \
@@ -32,7 +29,7 @@ save_changeset_links_query = '''
             '''
 
 # Get_UnProcessed_BugIds: Get bug ids that have not being processed starting from startId up to endId:
-def Get_UnProcessed_BugIds(startId, endId):
+def Get_BugIds_To_Process(startId, endId):
     try:
         conn = pyodbc.connect(conn_str)
         cursor = conn.cursor()
@@ -47,7 +44,7 @@ def Get_UnProcessed_BugIds(startId, endId):
                 AND potential_hashes LIKE '%FINISHED_CHANGESET_HASHES_CRAWLING |'
                 )
             AND (changeset_links IS NULL OR changeset_links NOT LIKE '%FINISHED_CHANGESET_LINKS_CRAWLING |')
-            AND (id >= ? AND id <= ?)
+            AND id BETWEEN ? AND ?
             ORDER BY id ASC""", (startId, endId))
         
         rows = cursor.fetchall()
@@ -163,7 +160,7 @@ if __name__ == "__main__":
     start_id = args.start_id
     end_id = args.end_id
 
-    list_of_bugIds = Get_UnProcessed_BugIds(str(start_id), str(end_id))
+    list_of_bugIds = Get_BugIds_To_Process(str(start_id), str(end_id))
     record_count = len(list_of_bugIds)
 
     for bugId in list_of_bugIds:
