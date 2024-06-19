@@ -248,7 +248,7 @@ def get_backout_hashes_by(Commit_Link):
             if response.status_code == 200:
                 content = response.text
                 soup = BeautifulSoup(content, 'html.parser')
-                backs_out_td = soup.find('td', text='backs out')
+                backs_out_td = soup.find('td', string='backs out')
                 if backs_out_td:
                     next_td = backs_out_td.find_next_sibling('td')
                     if next_td:
@@ -339,6 +339,6 @@ if __name__ == "__main__":
         set_of_backouted_hashes = get_backout_hashes_by(Commit_Link)
         save_backouted_hashes(Backed_Out_By, set_of_backouted_hashes)
         print("Done")
-        record_count += 1
+        record_count -= 1
 
 print("Total Remaining Records: 0. Finished processing. Exit program.")
