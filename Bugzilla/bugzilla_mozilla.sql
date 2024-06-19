@@ -95,6 +95,20 @@ select count(*) from Bugzilla_Mozilla_ShortLog;
 --delete from Bugzilla_Mozilla_ShortLog;
 
 
+-- Get all back out commits with at least some bug ids:
+-- Divide 6 processes (each handles 5888 records):
+	-- [6606, 12536], [12537, 18435], [18436, 24505], [24506, 30437], [30438, 36782], [36783, 42177]
+WITH Q1 AS(
+	SELECT ROW_NUMBER() OVER(ORDER BY Hash_Id ASC) AS Row_Num, Hash_Id, Commit_Link, Backout_Hashes FROM Bugzilla_Mozilla_ShortLog
+	WHERE Is_Backed_Out_Commit = 1
+	AND Bug_Ids <> ''
+)
+SELECT Hash_Id, Commit_Link, Row_Num, Backout_Hashes from Q1
+WHERE 1=1 
+AND Backout_Hashes IS NULL -- Include records have not been processes
+--AND Backout_Hashes IS NOT NULL -- Include records have been processes
+--AND Row_Num BETWEEN 6606 AND 6608
+ORDER BY Row_Num ASC; 
 
 
 
@@ -125,22 +139,8 @@ FETCH NEXT 5 ROWS ONLY; --limit
 
 
 
--- Get all back out commits with at least some bug ids:
--- Divide 6 processes (each handles 5888 records):
-	-- [6606, 12536], [12537, 18435], [18436, 24505], [24506, 30437], [30438, 36782], [36783, 42177]
-WITH Q1 AS(
-	SELECT ROW_NUMBER() OVER(ORDER BY Hash_Id ASC) AS Row_Num, Hash_Id, Commit_Link, Backout_Hashes FROM Bugzilla_Mozilla_ShortLog
-	WHERE Is_Backed_Out_Commit = 1
-	AND Bug_Ids <> ''
-)
-SELECT Hash_Id, Commit_Link, Row_Num, Backout_Hashes from Q1
-WHERE 1=1 
-AND Backout_Hashes IS NULL -- Include records have not been processes
---AND Backout_Hashes IS NOT NULL -- Include records have been processes
---AND Row_Num BETWEEN 6606 AND 6608
-ORDER BY Row_Num ASC; 
 
-select * from Bugzilla_Mozilla_ShortLog where hash_id in('27e03731726b5baf19484e7a2c428b19f4dbff3f','27e106182b313546ce2f248c0bd9512edd6965b0')
+
 --------------------------------------------------------------------------------------- -------
 ----------------------------------------------------------------------------------------------
 /* WORKING AREA */

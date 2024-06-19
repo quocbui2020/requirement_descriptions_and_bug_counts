@@ -307,12 +307,13 @@ def save_backouted_hashes(Backed_Out_By, set_of_backouted_hashes):
         except pyodbc.Error as e:
             error_code = e.args[0]
             if error_code in ['40001', '40P01']:  # Deadlock error codes
-                print(f"Deadlock detected. Attempt number: {str(attempt_number)}. Sleep for 5 second and retry...")
-                time.sleep(5)
                 attempt_number += 1
+                print("Deadlock.")
+                print(f"Attempt number: {str(attempt_number)}. Sleep for 5 second and try again...", end="", flush=True)
+                time.sleep(5)
                 if attempt_number < max_retries:
                     continue
-            print(f"Error: {e}")
+            print(f"\nError: {e}")
             exit()
         finally:
             # Close the cursor and connection if they are not None
@@ -321,7 +322,7 @@ def save_backouted_hashes(Backed_Out_By, set_of_backouted_hashes):
             if conn:
                 conn.close()
     else:
-        print("Failed after maximum retry attempts due to deadlock.")
+        print("\nFailed after maximum retry attempts due to deadlock.")
         exit()
 
 ######################################################################
@@ -350,10 +351,10 @@ if __name__ == "__main__":
     for commit in list_of_commits:
         Backed_Out_By, Commit_Link, Row_Num, Backout_Hashes = commit
 
-        print(f"[{strftime('%m/%d/%Y %H:%M:%S', localtime())}] Total Remaining Records: {str(record_count)}. Process hash {Backed_Out_By}...", end="", flush=True)
+        print(f"[{strftime('%m/%d/%Y %H:%M:%S', localtime())}] Remainings: {str(record_count)}. Process hash {Backed_Out_By}...", end="", flush=True)
         set_of_backouted_hashes = get_backout_hashes_by(Commit_Link)
         save_backouted_hashes(Backed_Out_By, set_of_backouted_hashes)
         print("Done")
         record_count -= 1
 
-print("Total Remaining Records: 0. Finished processing. Exit program.")
+print(f"[{strftime('%m/%d/%Y %H:%M:%S', localtime())}] Remainings: 0. Finished processing. Exit program.")

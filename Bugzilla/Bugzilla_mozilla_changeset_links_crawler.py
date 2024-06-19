@@ -24,7 +24,7 @@ conn_str = 'DRIVER={ODBC Driver 18 for SQL Server};' \
            'TrustServerCertificate=yes;' \
            'Trusted_Connection=yes;'
 
-update_changeset_links_query = '''
+save_changeset_links_query = '''
             UPDATE [dbo].[Bugzilla]
                 SET [changeset_links] = ?
             WHERE [ID] = ?
@@ -115,22 +115,42 @@ def Crawling_For_Changeset_Links(bugId):
         print(f"Error: {e}")
         return None
 
-def Update_Changeset_Links(bugId, HashIdsString):
-    try:
-        conn = pyodbc.connect(conn_str)
-        cursor = conn.cursor()
-        cursor.execute(update_changeset_links_query, HashIdsString, bugId)
-        conn.commit()
-    except Exception as e:
-        # Handle any exceptions
-        print(f"Error: {e}")
+def Save_Changeset_Links(bugId, HashIdsString):
+    global conn_str
+    attempt_number = 1
+    max_retries = 999 # Number of max attempts if deadlock encountered.
+
+    while attempt_number <= max_retries:
+        try:
+            conn = pyodbc.connect(conn_str)
+            cursor = conn.cursor()
+
+            cursor.execute(save_changeset_links_query, HashIdsString, bugId)
+            conn.commit()
+
+            # If commit is successful, break the retry loop
+            break
+
+        except pyodbc.Error as e:
+            error_code = e.args[0]
+            if error_code in ['40001', '40P01']:  # Deadlock error codes
+                attempt_number += 1
+                print("Deadlock.")
+                print(f"Attempt number: {str(attempt_number)}. Sleep for 5 second and try again...", end="", flush=True)
+                time.sleep(5)
+                if attempt_number < max_retries:
+                    continue
+            print(f"\nError: {e}")
+            exit()
+        finally:
+            # Close the cursor and connection if they are not None
+            if cursor:
+                cursor.close()
+            if conn:
+                conn.close()
+    else:
+        print("\nFailed after maximum retry attempts due to deadlock.")
         exit()
-    finally:
-        # Close the cursor and connection if they are not None
-        if cursor:
-            cursor.close()
-        if conn:
-            conn.close()
 
 ######################################################################################
 if __name__ == "__main__":
@@ -147,10 +167,12 @@ if __name__ == "__main__":
     record_count = len(list_of_bugIds)
 
     for bugId in list_of_bugIds:
-        print(f"Total Remaining Records: {str(record_count)}. Process bug id {bugId}...", end="", flush=True)
+        print(f"[{strftime('%m/%d/%Y %H:%M:%S', localtime())}] Remainings: {str(record_count)}. Process bug id {bugId}...", end="", flush=True)
         HashIdsString = Crawling_For_Changeset_Links(bugId)
         #HashIdsString = None
         if HashIdsString:
-            Update_Changeset_Links(bugId, HashIdsString)
+            Save_Changeset_Links(bugId, HashIdsString)
         print("Done")
         record_count -= 1
+
+print(f"[{strftime('%m/%d/%Y %H:%M:%S', localtime())}] Remainings: 0. Finished processing. Exit program.")
