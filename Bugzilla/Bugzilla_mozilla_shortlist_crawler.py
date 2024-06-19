@@ -54,14 +54,14 @@ create_bugzilla_error_log_query = '''
 
 get_backout_commits_query = '''
 WITH Q1 AS(
-	SELECT ROW_NUMBER() OVER(ORDER BY Hash_Id ASC) AS Row_Num,Hash_Id, Commit_Link FROM Bugzilla_Mozilla_ShortLog
+	SELECT ROW_NUMBER() OVER(ORDER BY Hash_Id ASC) AS Row_Num, Hash_Id, Commit_Link, Backout_Hashes FROM Bugzilla_Mozilla_ShortLog
 	WHERE Is_Backed_Out_Commit = 1
 	AND Bug_Ids <> ''
-	AND Backout_Hashes IS NULL
 )
-SELECT Hash_Id, Commit_Link, Row_Num from Q1
+SELECT Hash_Id, Commit_Link, Row_Num, Backout_Hashes from Q1
 WHERE Row_Num BETWEEN ? AND ?
-ORDER BY Hash_Id ASC; 
+AND Backout_Hashes IS NULL -- Include records have not been processes
+ORDER BY Row_Num ASC; 
 '''
 
 save_backout_hashes_query = '''
@@ -280,37 +280,52 @@ def get_backout_hashes_by(Commit_Link):
 
 def save_backouted_hashes(Backed_Out_By, set_of_backouted_hashes):
     global conn_str
+    attempt_number = 1
+    max_retries = 999 # Number of max attempts if deadlock encountered.
+    
+    while attempt_number <= max_retries:
+        try:
+            # Connect to the database
+            conn = pyodbc.connect(conn_str)
+            cursor = conn.cursor()
 
-    # Connect to the database
-    conn = pyodbc.connect(conn_str)
-    cursor = conn.cursor()
-    try:
-        list_of_backouted_hashes = " | ".join(set_of_backouted_hashes)
-        if list_of_backouted_hashes == "" or list_of_backouted_hashes == None:
-            list_of_backouted_hashes = "NO_HASHES_FOUND"
-        
-        cursor.execute(save_backout_hashes_query, (list_of_backouted_hashes, Backed_Out_By))
+            list_of_backouted_hashes = " | ".join(set_of_backouted_hashes)
+            if list_of_backouted_hashes == "" or list_of_backouted_hashes == None:
+                list_of_backouted_hashes = "NO_HASHES_FOUND"
+            
+            cursor.execute(save_backout_hashes_query, (list_of_backouted_hashes, Backed_Out_By))
 
-        for backout_hash in set_of_backouted_hashes:
-            cursor.execute(set_back_out_by_field_query, (Backed_Out_By, backout_hash))
+            for backout_hash in set_of_backouted_hashes:
+                cursor.execute(set_back_out_by_field_query, (Backed_Out_By, backout_hash))
 
-        # Commit the transaction
-        conn.commit()
+            # Commit the transaction
+            conn.commit()
 
-    except Exception as e:
-        print(f"Error: {e}")
+            # If commit is successful, break the retry loop
+            break
+
+        except pyodbc.Error as e:
+            error_code = e.args[0]
+            if error_code in ['40001', '40P01']:  # Deadlock error codes
+                print(f"Deadlock detected. Attempt number: {str(attempt_number)}. Sleep for 5 second and retry...")
+                time.sleep(5)
+                attempt_number += 1
+                if attempt_number < max_retries:
+                    continue
+            print(f"Error: {e}")
+            exit()
+        finally:
+            # Close the cursor and connection if they are not None
+            if cursor:
+                cursor.close()
+            if conn:
+                conn.close()
+    else:
+        print("Failed after maximum retry attempts due to deadlock.")
         exit()
-    finally:
-        # Close the cursor and connection if they are not None
-        if cursor:
-            cursor.close()
-        if conn:
-            conn.close()
-
 
 ######################################################################
 if __name__ == "__main__":
-
     parser = argparse.ArgumentParser(description="")
     parser.add_argument('arg_1', type=str, help='Argument 1')
     parser.add_argument('arg_2', type=str, help='Argument 2')
@@ -333,7 +348,7 @@ if __name__ == "__main__":
     record_count = len(list_of_commits)
 
     for commit in list_of_commits:
-        Backed_Out_By, Commit_Link, Row_Num = commit
+        Backed_Out_By, Commit_Link, Row_Num, Backout_Hashes = commit
 
         print(f"[{strftime('%m/%d/%Y %H:%M:%S', localtime())}] Total Remaining Records: {str(record_count)}. Process hash {Backed_Out_By}...", end="", flush=True)
         set_of_backouted_hashes = get_backout_hashes_by(Commit_Link)
