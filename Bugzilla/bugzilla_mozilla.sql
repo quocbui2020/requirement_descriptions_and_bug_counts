@@ -90,6 +90,9 @@ ORDER BY id desc;
 /* CRAWLING FOR COMMIT LISTS (ONLY MOZILLA CENTRAL FOR NOW) */
 --------------------------------------------------
 --------------------------------------------------
+--TODO: Process of changeset links found in the comments as well (Blocker: Rayhan set up crawlers to crawl for changeset links first)
+--TODO: Another way to find backout hashes is in the [Commit_Summary], no need to make any external API requests.
+--TODO: After updated Backout_Hashes, for any records that doesn't have at least one back out hash, manually check it
 
 select count(*) from Bugzilla_Mozilla_ShortLog;
 --delete from Bugzilla_Mozilla_ShortLog;
@@ -103,7 +106,7 @@ WITH Q1 AS(
 	WHERE Is_Backed_Out_Commit = 1
 	AND Bug_Ids <> ''
 )
-SELECT Hash_Id, Commit_Link, Row_Num, Backout_Hashes from Q1
+SELECT Row_Num, Hash_Id, Commit_Link, Backout_Hashes from Q1
 WHERE 1=1 
 AND Backout_Hashes IS NULL -- Include records have not been processes
 --AND Backout_Hashes IS NOT NULL -- Include records have been processes
@@ -114,14 +117,13 @@ ORDER BY Row_Num ASC;
 
 
 
+
 --------------------------------------------------
 --------------------------------------------------
 /* CRAWLING FOR CHANGESET PARENT CHILD HASHES IN EACH CHANGESET (IGNORE BACKED OUT BUGS AND BACKED OUT CHANGESETS */
 --------------------------------------------------
 --------------------------------------------------
---TODO: Process of changeset links found in the comments as well (Blocker: Rayhan set up crawlers to crawl for changeset links first)
---TODO: Another way to find backout hashes is in the [Commit_Summary], no need to make any external API requests.
---TODO: After updated Backout_Hashes, for any records that doesn't have at least one back out hash, manually check it
+
 
 -- Obtains list of changeset record to process from Bugzilla_Mozilla_ShortLog:
 	-- Each 'hash_id' could have multiple bug ids. So, if the bug is not 'fixed', then don't consider.
