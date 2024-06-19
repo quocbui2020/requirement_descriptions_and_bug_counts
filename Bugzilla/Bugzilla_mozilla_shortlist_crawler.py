@@ -10,6 +10,7 @@ import pyodbc
 import traceback
 import re
 import time
+import argparse
 
 # Connection string
 conn_str = 'DRIVER={ODBC Driver 18 for SQL Server};' \
@@ -20,33 +21,60 @@ conn_str = 'DRIVER={ODBC Driver 18 for SQL Server};' \
            'Trusted_Connection=yes;'
 
 # Prepare the SQL queries:
-insert_bugzilla_mozilla_shortlog_query = '''INSERT INTO [dbo].[Bugzilla_Mozilla_ShortLog]
-            ([Hash_Id]
-           ,[Commit_Summary]
-           ,[Bug_Ids]
-           ,[Commit_Link]
-           ,[Mercurial_Type]
-           ,[Changeset_Datetime]
-           ,[Is_Backed_Out_Commit]
-           ,[Backed_Out_By]
-           ,[Does_Required_Human_Inspection]
-           ,[Inserted_On])
-        VALUES
-            (?, ?, ?, ?, ?, ?, ?, ?, ?, SYSUTCDATETIME())'''
+insert_bugzilla_mozilla_shortlog_query = '''
+    INSERT INTO [dbo].[Bugzilla_Mozilla_ShortLog]
+        ([Hash_Id]
+        ,[Commit_Summary]
+        ,[Bug_Ids]
+        ,[Commit_Link]
+        ,[Mercurial_Type]
+        ,[Changeset_Datetime]
+        ,[Is_Backed_Out_Commit]
+        ,[Backed_Out_By]
+        ,[Does_Required_Human_Inspection]
+        ,[Inserted_On])
+    VALUES
+        (?, ?, ?, ?, ?, ?, ?, ?, ?, SYSUTCDATETIME())
+'''
 
-create_bugzilla_error_log_query = '''INSERT INTO [dbo].[Bugzilla_Error_Log]
-            ([ID]
-           ,[Bug_ID]
-           ,[Request_Url]
-           ,[Error_Messages]
-           ,[Detail_Error_Message]
-           ,[Offset]
-           ,[Limit]
-           ,[Completed]
-           ,[inserted_on])
-        VALUES
-            (NEWID(), ?, ?, ?, ?, ?, ?, 0, SYSUTCDATETIME())'''
+create_bugzilla_error_log_query = '''
+    INSERT INTO [dbo].[Bugzilla_Error_Log]
+        ([ID]
+        ,[Bug_ID]
+        ,[Request_Url]
+        ,[Error_Messages]
+        ,[Detail_Error_Message]
+        ,[Offset]
+        ,[Limit]
+        ,[Completed]
+        ,[inserted_on])
+    VALUES
+        (NEWID(), ?, ?, ?, ?, ?, ?, 0, SYSUTCDATETIME())
+'''
 
+get_backout_commits_query = '''
+WITH Q1 AS(
+	SELECT ROW_NUMBER() OVER(ORDER BY Hash_Id ASC) AS Row_Num,Hash_Id, Commit_Link FROM Bugzilla_Mozilla_ShortLog
+	WHERE Is_Backed_Out_Commit = 1
+	AND Bug_Ids <> ''
+	AND Backout_Hashes IS NULL
+)
+SELECT Hash_Id, Commit_Link, Row_Num from Q1
+WHERE Row_Num BETWEEN ? AND ?
+ORDER BY Hash_Id ASC; 
+'''
+
+save_backout_hashes_query = '''
+    UPDATE [dbo].[Bugzilla_Mozilla_ShortLog]
+    SET Backout_Hashes = ?
+    WHERE Backout_Hashes IS NULL and Hash_Id = ?
+'''
+
+set_back_out_by_field_query = '''
+    UPDATE Bugzilla_Mozilla_ShortLog
+    SET Backed_Out_By = ?
+    WHERE Hash_Id = ?
+'''
 
 def crawl_mozilla_central_shortlog(hash_id, max_retries=5):
     global conn_str, create_bugzilla_error_log_query
@@ -179,16 +207,138 @@ def save_shortlog_to_db(changeset_info):
         cursor.close()
         conn.close()
 
+def get_backout_commits(arg_1, arg_2):
+    global conn_str
+
+    try:
+        # Connect to the database
+        conn = pyodbc.connect(conn_str)
+        cursor = conn.cursor()
+
+        cursor.execute(get_backout_commits_query, (arg_1, arg_2))
+        rows = cursor.fetchall()
+        return rows
+    
+    except Exception as e:
+        # Handle any exceptions
+        print(f"Error: {e}")
+        exit()
+    
+    finally:
+        # Close the cursor and connection
+        cursor.close()
+        conn.close()
+
+def get_backout_hashes_by(Commit_Link):
+    global conn_str
+
+    # Connect to the database
+    conn = pyodbc.connect(conn_str)
+    cursor = conn.cursor()
+
+    base_url = f"https://hg.mozilla.org"
+    request_url = base_url + str(Commit_Link)
+    
+    set_of_backouted_hashes = set()
+
+    try:
+        attempt_number = 1
+        while attempt_number <= 5:
+            response = requests.get(request_url)
+            if response.status_code == 200:
+                content = response.text
+                soup = BeautifulSoup(content, 'html.parser')
+                backs_out_td = soup.find('td', text='backs out')
+                if backs_out_td:
+                    next_td = backs_out_td.find_next_sibling('td')
+                    if next_td:
+                        links = next_td.find_all('a', href=True)
+                        set_of_backouted_hashes.update(link.text for link in links)
+                break
+            elif response.status_code == 404:
+                print("Error 404: Not Found")
+                break
+            else:
+                print(f"Attempt {attempt_number} failed with status code {response.status_code}. Retrying...")
+                attempt_number += 1
+                time.sleep(5)
+        else:
+            print("Failed after 3 attempts.")
+            exit()
+
+    except Exception as e:
+        print(f"Error: {e}")
+        exit()
+    finally:
+        # Close the cursor and connection if they are not None
+        if cursor:
+            cursor.close()
+        if conn:
+            conn.close()
+
+    return set_of_backouted_hashes
+
+def save_backouted_hashes(Backed_Out_By, set_of_backouted_hashes):
+    global conn_str
+
+    # Connect to the database
+    conn = pyodbc.connect(conn_str)
+    cursor = conn.cursor()
+    try:
+        list_of_backouted_hashes = " | ".join(set_of_backouted_hashes)
+        if list_of_backouted_hashes == "" or list_of_backouted_hashes == None:
+            list_of_backouted_hashes = "NO_HASHES_FOUND"
+        
+        cursor.execute(save_backout_hashes_query, (list_of_backouted_hashes, Backed_Out_By))
+
+        for backout_hash in set_of_backouted_hashes:
+            cursor.execute(set_back_out_by_field_query, (Backed_Out_By, backout_hash))
+
+        # Commit the transaction
+        conn.commit()
+
+    except Exception as e:
+        print(f"Error: {e}")
+        exit()
+    finally:
+        # Close the cursor and connection if they are not None
+        if cursor:
+            cursor.close()
+        if conn:
+            conn.close()
+
+
 ######################################################################
 if __name__ == "__main__":
-    # Real run:
-    next_hash = "a0fe8d257aa715bf45880b8e7661f949fa242a10"
-    while True:
-        print(f"Processing next hash: {next_hash}...", end="", flush=True)
-        changeset_info, next_hash = crawl_mozilla_central_shortlog(next_hash)
-        save_shortlog_to_db(changeset_info)
+
+    parser = argparse.ArgumentParser(description="")
+    parser.add_argument('arg_1', type=str, help='Argument 1')
+    parser.add_argument('arg_2', type=str, help='Argument 2')
+    args = parser.parse_args()
+    arg_1 = args.arg_1
+    arg_2 = args.arg_2
+
+    ## Step 1: Crawling for all shortlog records (Done for mozilla-central)
+    # next_hash = "a0fe8d257aa715bf45880b8e7661f949fa242a10"
+    # while True:
+    #     print(f"Processing next hash: {next_hash}...", end="", flush=True)
+    #     changeset_info, next_hash = crawl_mozilla_central_shortlog(next_hash)
+    #     save_shortlog_to_db(changeset_info)
+    #     print("Done")
+    #     if next_hash == "no_next_hash":
+    #         break
+
+    ## Step 2: For each backout commit, retreated the backout hashes and and updated 'Backout_Hashes' and 'Is_Backed_Out_Commit'
+    list_of_commits = get_backout_commits(arg_1, arg_2)
+    record_count = len(list_of_commits)
+
+    for commit in list_of_commits:
+        Backed_Out_By, Commit_Link, Row_Num = commit
+
+        print(f"[{strftime('%m/%d/%Y %H:%M:%S', localtime())}] Total Remaining Records: {str(record_count)}. Process hash {Backed_Out_By}...", end="", flush=True)
+        set_of_backouted_hashes = get_backout_hashes_by(Commit_Link)
+        save_backouted_hashes(Backed_Out_By, set_of_backouted_hashes)
         print("Done")
-        if next_hash == "no_next_hash":
-            break
-        
-print("Finished processing. Exit program.")
+        record_count += 1
+
+print("Total Remaining Records: 0. Finished processing. Exit program.")

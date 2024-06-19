@@ -105,7 +105,9 @@ select count(*) from Bugzilla_Mozilla_ShortLog;
 /* CRAWLING FOR CHANGESET PARENT CHILD HASHES IN EACH CHANGESET (IGNORE BACKED OUT BUGS AND BACKED OUT CHANGESETS */
 --------------------------------------------------
 --------------------------------------------------
---TODO: Process of changeset links found in the comments as well.
+--TODO: Process of changeset links found in the comments as well (Blocker: Rayhan set up crawlers to crawl for changeset links first)
+--TODO: Another way to find backout hashes is in the [Commit_Summary], no need to make any external API requests.
+--TODO: After updated Backout_Hashes, for any records that doesn't have at least one back out hash, manually check it
 
 -- Obtains list of changeset record to process from Bugzilla_Mozilla_ShortLog:
 	-- Each 'hash_id' could have multiple bug ids. So, if the bug is not 'fixed', then don't consider.
@@ -121,6 +123,23 @@ ORDER BY Bug_Ids ASC
 OFFSET 0 ROWS --offset
 FETCH NEXT 10 ROWS ONLY; --limit
 
+-- Get all back out commits with at least some bug ids:
+-- Divide 5 processes (each handles 8427 records):
+	-- [1, 8427], [8428, 16855], [16856, 25283], [25284, 33711], [33712, 42136] 
+WITH Q1 AS(
+	select ROW_NUMBER() OVER(ORDER BY Hash_Id ASC) AS Row_Num,* from Bugzilla_Mozilla_ShortLog
+	where Is_Backed_Out_Commit = 1
+	--AND Hash_Id BETWEEN '0051840a2dd03d4bb9b27649feb54537e5031bde' AND  '005382a5a58ff70933c9f535b3a8e6158ccccea6'
+	and Bug_Ids <> ''
+	--and Backout_Hashes IS NOT NULL -- Include records have been processed.
+	and Backout_Hashes is null --Include records have not been processed.
+)
+SELECT Row_Num, * from Q1
+--WHERE Row_Num BETWEEN 1 AND 5
+ORDER BY Hash_Id ASC;
+
+select * from Bugzilla_Mozilla_ShortLog
+where Backed_Out_By is not null;
 --------------------------------------------------------------------------------------- -------
 ----------------------------------------------------------------------------------------------
 /* WORKING AREA */
