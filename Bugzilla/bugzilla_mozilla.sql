@@ -27,7 +27,7 @@ select * from Bugzilla where id='1507218';
 
 SELECT top 1000* FROM Bugzilla order by id desc;
 SELECT * FROM Bugzilla where alias like '%CVE%' and potential_hashes like '%FINISHED_CHANGESET_HASHES_CRAWLING |' and product='Firefox';
---3f6036fb9dca03914f3c6466e34d70d231487108 | 1323452 | 904bf9addd03b03d4cad11b82f19f43d875b7f27 | 8834370 | b180354560dd | 8811210 | 791597 | 1296837 | 20161208153507 | 1313759 | b52932a0811b | 3f6036fb9dca | 20170220070057 | FINISHED_CHANGESET_HASHES_CRAWLING |
+
 SELECT top 1 id AS Crawler1_TOP1_0_475362 FROM Bugzilla WHERE id <= 475362 order by id desc;
 SELECT top 1 id AS Crawler2_TOP1_475363_950725 FROM Bugzilla WHERE id >= 475363 and id <= 950725 order by id desc;
 SELECT top 1 id AS Crawler3_TOP1_950726_1426088 FROM bugzilla where id >= 950726 and id <= 1426088 order by id desc;
@@ -77,8 +77,11 @@ AND (
 	AND potential_hashes LIKE '%FINISHED_CHANGESET_HASHES_CRAWLING |'
 	)
 AND (changeset_links is null OR changeset_links not like '%FINISHED_CHANGESET_LINKS_CRAWLING |')
---AND (id >= 0 AND id <= 1000)
-ORDER BY id desc; 
+AND id BETWEEN 38 AND 42
+ORDER BY id asc; 
+
+SELECT id, potential_hashes, changeset_links
+FROM Bugzilla where changeset_links like '% | FINISHED_CHANGESET_LINKS_CRAWLING |'
 
 
 
@@ -123,22 +126,32 @@ ORDER BY Row_Num ASC;
 /* CRAWLING FOR CHANGESET PARENT CHILD HASHES IN EACH CHANGESET (IGNORE BACKED OUT BUGS AND BACKED OUT CHANGESETS */
 --------------------------------------------------
 --------------------------------------------------
+-- Blocker: (1) Wait until the crawlers finished processing Backout_Hashes. (2) going through records that [Does_Required_Human_Inspection] = 1.
+-- TODO: Get parent child hashes in [Bugzilla].[changeset_links].
+-- TODO: Get parent child hashes in [Bugzilla_Mozilla_ShortLog].
+-- Algorithm note: 
+	-- Double check to ensure the commit isn't backed out.
+	-- Check if the bug related to this commit is fixed and resolved.
 
-
--- Obtains list of changeset record to process from Bugzilla_Mozilla_ShortLog:
-	-- Each 'hash_id' could have multiple bug ids. So, if the bug is not 'fixed', then don't consider.
-SELECT hash_id, Bug_Ids 
-FROM Bugzilla_Mozilla_ShortLog
---JOIN Bugzilla ON
-WHERE (Backed_Out_By IS NULL OR Backed_Out_By = '')
-	AND (Bug_Ids IS NOT NULL AND Bug_Ids <> '' AND Bug_Ids <> '0')
-	--AND Bug_Ids like '%1799002%'
-	--AND Hash_Id='b9a4318d5c1f7c10d48cd0f49849fbd159ae623d'
-	AND Is_Backed_Out_Commit = 1
-ORDER BY Bug_Ids ASC
-OFFSET 0 ROWS --offset
-FETCH NEXT 5 ROWS ONLY; --limit
-
+-- Obtains list of changeset in [Bugzilla_Mozilla_ShortLog]:
+	-- Each changesets could have multiple bug ids (Probably just because it is a backed out commit. So, if the bug is not 'fixed', then don't consider.
+WITH Q1 AS (
+	SELECT ROW_NUMBER() OVER(ORDER BY Hash_Id ASC) AS Row_Num
+		,Hash_Id
+		,Bug_Ids
+		,Commit_Link
+		,Is_Done_Parent_Child_Hashes
+	FROM Bugzilla_Mozilla_ShortLog
+	WHERE (Backed_Out_By IS NULL OR Backed_Out_By = '')
+		AND (Bug_Ids IS NOT NULL AND Bug_Ids <> '' AND Bug_Ids <> '0')
+		AND Is_Backed_Out_Commit = '0'
+)
+SELECT Row_Num, Hash_Id, Bug_Ids, Commit_Link, Is_Done_Parent_Child_Hashes
+FROM Q1
+WHERE 1=1
+--AND Is_Done_Parent_Child_Hashes = 1 -- Include records have been processed.
+AND Is_Done_Parent_Child_Hashes = 0 -- Include records have not been processed.
+--AND Row_Num BETWEEN 0 AND 1000
 
 
 
