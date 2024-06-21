@@ -42,6 +42,18 @@ Get_Records_To_Process_Query = '''
         AND Row_Num BETWEEN ? AND ?
 '''
 
+save_changeset_info_query = '''
+    INSERT INTO [dbo].[Bugzilla_Mozilla_Changeset_Parent_Child_Hashes]
+        ([Changeset_Hash]
+        ,[Changeset_Datetime]
+        ,[Bug_Ids]
+        ,[Parent_Hash]
+        ,[Child_Hash]
+        ,[File_Names]
+        ,[Inserted_On])
+    VALUES (?, ?, ?, ?, ?, ?, SYSUTCDATETIME())
+'''
+
 def get_records_to_process(start_row, end_row):
     global conn_str, Get_Records_To_Process_Query
     attempt_number = 1
@@ -91,10 +103,11 @@ def is_resolved_bug(bug_id):
             conn = pyodbc.connect(conn_str)
             cursor = conn.cursor()
 
-            cursor.execute(f"SELECT [resolution] WHERE id = ?", (bug_id))
-            resolution = cursor.fetchone() # fetch one is enough because id is unique.
+            cursor.execute(f"SELECT [resolution] from Bugzilla WHERE id = ?", (bug_id))
+            queryResult = cursor.fetchone() # fetch one is enough because id is unique.
 
-            if resolution == None or resolution != 'FIXED':
+            # If query yields no data or the resolution is null or not 'FIXED', return false. Otherwise, return true
+            if not queryResult or queryResult[0] == None or queryResult[0] != 'FIXED':
                 return False
             return True
         
@@ -123,26 +136,78 @@ def is_resolved_bug(bug_id):
         print("\nFailed after maximum retry attempts due to deadlock.")
         exit()
 
-if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="")
-    parser.add_argument('arg_1', type=int, help='Argument 1')
-    parser.add_argument('arg_2', type=int, help='Argument 2')
-    args = parser.parse_args()
-    arg_1 = args.arg_1
-    arg_2 = args.arg_2
+def obtain_changeset_info(Commit_Link):
+    base_url = f"https://hg.mozilla.org"
+    request_url = base_url + str(Commit_Link)
+    attempt_number = 1
+    max_attempt = 5
 
-    list_of_records = get_records_to_process(arg_1, arg_2)
+    try:
+        while attempt_number <= max_attempt:
+            response = requests.get(request_url)
+            if response.status_code == 200:
+                break
+            elif response.status_code == 429:
+                print("Failed with 429 code")
+                print("Sleep for 10s and retry...", end="", flush=True)
+                time.sleep(10)
+                attempt_number += 1
+            else:
+                print(f"Request has status code other than 200. Request url: {request_url}.")
+                exit() # if code status is not 200 or 429. It should require human interaction.
+            
+            if attempt_number == max_attempt:
+                print(f"Failed too many request attempts. Status code: {response.status_code}. Exit program.")
+                return None
+            
+            content = response.text
+
+            # Extract parents hashes and file names
+            # Confirm again this is not 'backed out' changeset. Example: https://hg.mozilla.org/mozilla-central/raw-rev/9bb52c6580dd4eea416e1a2b7bce7635c3acf84d . Not possible to re-confirm in 'raw' view.
+            # Confirm again this should only have 1 parent, if changeset has 2 parents and associated with at least one bug --> require human inspection.
+            # Pay attention to keywords: 'rename', 'deleted file mode', 'new file mode', 'rename from', 'rename to', 'new file mode', 'copy from', 'copy to' (Do not consider '-/+diff --git'). Good example for all those keywords: https://hg.mozilla.org/mozilla-central/raw-rev/26cce0d3e1030a3ede35b55e257dcf1e36539153 
+            # file_modes: modified, deleted, new, renamed, renamed_modified
+
+
+    except Exception as e:
+        print(f"Error: {e}")
+        exit()
+
+if __name__ == "__main__":
+    # parser = argparse.ArgumentParser(description="")
+    # parser.add_argument('arg_1', type=int, help='Argument 1')
+    # parser.add_argument('arg_2', type=int, help='Argument 2')
+    # args = parser.parse_args()
+    # start_row = args.arg_1
+    # end_row = args.arg_2
+    start_row = 4399
+    end_row = 4400
+
+    list_of_records = get_records_to_process(start_row, end_row)
     record_count = len(list_of_records)
 
     for record in list_of_records:
-        Row_Num, Hash_Id, Bug_Ids, Commit_Link, Is_Done_Parent_Child_Hashes = record
+        Row_Num, changeset_hash_Id, Bug_Ids, Commit_Link, Is_Done_Parent_Child_Hashes = record
+
+        print(f"[{strftime('%m/%d/%Y %H:%M:%S', localtime())}] Remainings: {str(record_count)}. Process changeset {changeset_hash_Id}...", end="", flush=True)
 
         # Iterate through 'Bug_Ids' and check if any of them are 'resolved' bugs. If not, no need to process further
-        is_resolved = is_resolved_bug(Bug_Ids)
+        list_of_bug_id = Bug_Ids.split(" | ")
+        is_skipped = True
+        for bug_id in list_of_bug_id:
+            is_resolved = is_resolved_bug(bug_id)
+            # If at least one of the bug in the changeset is 'resolved', then we will process this changeset
+            if is_resolved == True:
+                is_skipped = False
+                break
 
+        if is_skipped == True:
+            print("Skipped (Bugs Not 'Resolved')")
+            continue
 
-        print(f"[{strftime('%m/%d/%Y %H:%M:%S', localtime())}] Remainings: {str(record_count)}. Process hash {Hash_Id}...", end="", flush=True)
-        # Quoc: check if bug ids in the hash id has been resolved or not.
+        
+        data_tuple = obtain_changeset_info(Commit_Link)
+
         print("Done")
         record_count -= 1
 

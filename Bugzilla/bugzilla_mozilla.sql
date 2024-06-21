@@ -1,9 +1,11 @@
 /*
 Notes:
--changeset hashes need to combined with either github url or bugzilla url.
--For github commit url. Add .patch after the hashes enable us to view raw file.
--View raw github files:
+- changeset hashes need to combined with either github url or hg url (focus on hg for now) -- Done
+- For github commit url. Add .patch after the hashes enable us to view raw file. -- Done
+- View raw github files:
 	https://raw.githubusercontent.com/.../<commit_hash_id>/<file_path>
+- What if the function name changed? What if 
+
 
 Potential improvement of the crawlers:
 1. Better capture of changeset links [Completed]
@@ -52,8 +54,6 @@ WHERE (
 		OR potential_hashes IS NULL
 		)
 	AND resolution = 'FIXED'
-
-
 
 
 
@@ -111,13 +111,10 @@ WITH Q1 AS(
 )
 SELECT Row_Num, Hash_Id, Commit_Link, Backout_Hashes from Q1
 WHERE 1=1 
-AND Backout_Hashes IS NULL -- Include records have not been processes
---AND Backout_Hashes IS NOT NULL -- Include records have been processes
+--AND Backout_Hashes IS NULL -- Include records have not been processes
+AND Backout_Hashes IS NOT NULL -- Include records have been processes
 --AND Row_Num BETWEEN 6606 AND 6608
 ORDER BY Row_Num ASC; 
-
-
-
 
 
 
@@ -152,8 +149,6 @@ WHERE 1=1
 --AND Is_Done_Parent_Child_Hashes = 1 -- Include records have been processed.
 AND Is_Done_Parent_Child_Hashes = 0 -- Include records have not been processed.
 --AND Row_Num BETWEEN 0 AND 1000
-
-
 
 
 --------------------------------------------------------------------------------------- -------

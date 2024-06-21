@@ -230,12 +230,6 @@ def get_backout_commits(arg_1, arg_2):
         conn.close()
 
 def get_backout_hashes_by(Commit_Link):
-    global conn_str
-
-    # Connect to the database
-    conn = pyodbc.connect(conn_str)
-    cursor = conn.cursor()
-
     base_url = f"https://hg.mozilla.org"
     request_url = base_url + str(Commit_Link)
     
@@ -269,12 +263,6 @@ def get_backout_hashes_by(Commit_Link):
     except Exception as e:
         print(f"Error: {e}")
         exit()
-    finally:
-        # Close the cursor and connection if they are not None
-        if cursor:
-            cursor.close()
-        if conn:
-            conn.close()
 
     return set_of_backouted_hashes
 
