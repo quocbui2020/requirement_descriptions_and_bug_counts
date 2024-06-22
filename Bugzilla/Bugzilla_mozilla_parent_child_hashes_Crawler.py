@@ -1,6 +1,6 @@
 import requests
 from datetime import datetime
-from prettytable import PrettyTable
+#from prettytable import PrettyTable
 from bs4 import BeautifulSoup
 import logging
 from logging import info
@@ -10768,3 +10768,4 @@ if __name__ == "__main__":
         record_count -= 1
 
 print(f"[{strftime('%m/%d/%Y %H:%M:%S', localtime())}] PROGRAM FINISHED. EXIT!")
+#test chanaged
