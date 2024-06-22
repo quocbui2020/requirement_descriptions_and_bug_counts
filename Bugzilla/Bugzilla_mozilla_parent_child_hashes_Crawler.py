@@ -10664,19 +10664,71 @@ def obtain_changeset_info(Commit_Link):
                 print(f"Failed too many request attempts. Status code: {response.status_code}. Exit program.")
                 return None
             
-            content = response.text
+        content = response.text
 
-            # Extract parents hashes and file names
-            # Confirm again this is not 'backed out' changeset. Example: https://hg.mozilla.org/mozilla-central/raw-rev/9bb52c6580dd4eea416e1a2b7bce7635c3acf84d . Not possible to re-confirm in 'raw' view.
-            # Confirm again this should only have 1 parent, if changeset has 2 parents and associated with at least one bug --> require human inspection.
-            # Pay attention to keywords: 'rename', 'deleted file mode', 'new file mode', 'rename from', 'rename to', 'new file mode', 'copy from', 'copy to' (Do not consider '-/+diff --git'). Good example for all those keywords: https://hg.mozilla.org/mozilla-central/raw-rev/26cce0d3e1030a3ede35b55e257dcf1e36539153 
-            # file_modes: modified, deleted, new, renamed, renamed_modified
+        # Extract Changeset_Datetime
+        datetime_match = re.search(r"# Date (\d+ [-+]\d+)", content)
+        Changeset_Datetime = datetime_match.group(1) if datetime_match else None
 
+        # Extract parent hashes
+        parent_hashes = " | ".join(re.findall(r"# Parent\s+([0-9a-f]+)", content))
+
+        # Extract file changes
+        file_changes = []
+        diff_blocks = content.split("\ndiff --git ")
+        
+        for block in diff_blocks[1:]:  # Skip the first block as it does not start with 'diff --git'
+            lines = block.splitlines()
+            diff_line = lines[0]
+            if lines[1].startswith("---"):
+                triple_neg_file_name = lines[1].split(" ", 1)[1]
+                triple_pos_file_name = lines[2].split(" ", 1)[1]
+                file_status = ""
+            elif lines[1].startswith("deleted file mode"):
+                triple_neg_file_name = lines[2].split(" ", 1)[1]
+                triple_pos_file_name = lines[3].split(" ", 1)[1]
+                file_status = "deleted"
+            elif lines[1].startswith("rename from"):
+                if "---" in lines[3] and "+++" in lines[4]:
+                    triple_neg_file_name = lines[3].split(" ", 1)[1]
+                    triple_pos_file_name = lines[4].split(" ", 1)[1]
+                    file_status = "renamed_modified"
+                else:
+                    triple_neg_file_name = lines[1].split(" ", 1)[1]
+                    triple_pos_file_name = lines[2].split(" ", 1)[1]
+                    file_status = "renamed"
+            elif lines[1].startswith("new file mode"):
+                triple_neg_file_name = lines[2].split(" ", 1)[1]
+                triple_pos_file_name = lines[3].split(" ", 1)[1]
+                file_status = "new"
+            elif lines[1].startswith("copy from"):
+                if "---" in lines[3] and "+++" in lines[4]:
+                    triple_neg_file_name = lines[3].split(" ", 1)[1]
+                    triple_pos_file_name = lines[4].split(" ", 1)[1]
+                    file_status = "copied"
+                else:
+                    triple_neg_file_name = lines[1].split(" ", 1)[1]
+                    triple_pos_file_name = lines[2].split(" ", 1)[1]
+                    file_status = "copied"
+            else:
+                continue
+
+            file_changes.append({
+                "triple_neg_file_name": triple_neg_file_name,
+                "triple_pos_file_name": triple_pos_file_name,
+                "file_status": file_status
+            })
+
+        return {
+            "Changeset_Datetime": Changeset_Datetime,
+            "parent_hashes": parent_hashes,
+            "file_changes": file_changes
+        }
 
     except Exception as e:
         print(f"Error: {e}")
         exit()
-
+        
 if __name__ == "__main__":
     # parser = argparse.ArgumentParser(description="")
     # parser.add_argument('arg_1', type=int, help='Argument 1')
