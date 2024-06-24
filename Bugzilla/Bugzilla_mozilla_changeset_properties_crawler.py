@@ -25,41 +25,33 @@ get_records_to_process_query = '''
             ,Hash_Id
             ,Bug_Ids
             ,Changeset_Link
-            ,Is_Done_Parent_Child_Hashes
+            ,Parent_Hashes
         FROM Bugzilla_Mozilla_Changesets
         WHERE (Backed_Out_By IS NULL OR Backed_Out_By = '')
             AND (Bug_Ids IS NOT NULL AND Bug_Ids <> '' AND Bug_Ids <> '0')
             AND Is_Backed_Out_Changeset = '0'
     )
-    SELECT Row_Num
-        ,Hash_Id
-        ,Bug_Ids
-        ,Changeset_Link
-        ,Is_Done_Parent_Child_Hashes
+    SELECT Row_Num, Hash_Id, Bug_Ids, Changeset_Link, Parent_Hashes
     FROM Q1
-    WHERE Is_Done_Parent_Child_Hashes = 0 -- Include records have not been processed.
+    WHERE (Parent_Hashes IS NULL OR Parent_Hashes NOT LIKE '%FINISHED_CHANGESET_PROPERTIES_CRAWLING |')
         AND Row_Num BETWEEN ? AND ?
 '''
 
-save_changeset_parent_child_hashes_query = '''
-    INSERT INTO [dbo].[Bugzilla_Mozilla_Changeset_Parent_Child_Hashes]
-        ([Changeset_Hash]
-        ,[Changeset_Datetime]
-        ,[Bug_Ids]
-        ,[Parent_Hashes]
-        ,[Inserted_On])
-    VALUES (?, ?, ?, ?, SYSUTCDATETIME())
+save_changeset_parent_hashes_query = '''
+    UPDATE [dbo].[Bugzilla_Mozilla_Changesets]
+    SET [Parent_Hashes] = ?
+    WHERE [Hash_Id] = ?
 '''
 
 save_commit_file_query = '''
-    INSERT INTO [dbo].[Bugzilla_Mozilla_Commit_File]
-        ([Chsnageset_Hash_ID]
-        ,[diff_git]
-        ,[---]
-        ,[+++]
-        ,[File_Status]
-        ,[Inserted_On])
-    VALUES (?, ?, ?, ?, SYSUTCDATETIME())
+    MERGE [dbo].[Bugzilla_Mozilla_Changeset_Files] AS target
+    USING (SELECT ? AS Changeset_Hash_ID, ? AS Previous_File_Name, ? AS Updated_File_Name) AS source
+    ON (target.Changeset_Hash_ID = source.Changeset_Hash_ID
+        AND target.Previous_File_Name = source.Previous_File_Name
+        AND target.Updated_File_Name = source.Updated_File_Name)
+    WHEN NOT MATCHED THEN
+        INSERT ([Changeset_Hash_ID], [Previous_File_Name], [Updated_File_Name], [File_Status], [Inserted_On])
+        VALUES (source.Changeset_Hash_ID, source.Previous_File_Name, source.Updated_File_Name, ?, SYSUTCDATETIME());
 '''
 
 
@@ -147,7 +139,7 @@ def is_resolved_bug(bug_id):
         print("\nFailed after maximum retry attempts due to deadlock.")
         exit()
 
-def obtain_changeset_info(Changeset_Link):
+def obtain_changeset_properties(Changeset_Link):
     base_url = f"https://hg.mozilla.org"
     request_url = base_url + str(Changeset_Link)
     request_url = str.replace(request_url, 'rev', 'raw-rev')
@@ -183,6 +175,7 @@ def obtain_changeset_info(Changeset_Link):
 
         # Extract parent hashes
         parent_hashes = " | ".join(re.findall(r"# Parent\s+([0-9a-f]+)", diff_blocks[0]))
+        parent_hashes += " | FINISHED_CHANGESET_PROPERTIES_CRAWLING |"
 
         # Extract file changes
         file_changes = []
@@ -191,39 +184,39 @@ def obtain_changeset_info(Changeset_Link):
             lines = block.splitlines() # Split by '\n'
             diff_git_line = lines[0] #ignore this line
             if lines[1].startswith("---") and lines[2].startswith("+++"):
-                triple_neg_file_name = lines[1].split(" ", 1)[1]
-                triple_pos_file_name = lines[2].split(" ", 1)[1]
+                previous_file_name = lines[1].split(" ", 1)[1]
+                updated_file_name = lines[2].split(" ", 1)[1]
                 file_status = "modified"
             elif lines[1].startswith("deleted file mode"):
-                triple_neg_file_name = lines[2].split(" ", 1)[1]
-                triple_pos_file_name = lines[3].split(" ", 1)[1]
+                previous_file_name = lines[2].split(" ", 1)[1]
+                updated_file_name = lines[3].split(" ", 1)[1]
                 file_status = "deleted"
             elif lines[1].startswith("rename from") and lines[2].startswith("rename to"):
                 if len(lines) >= 4 and lines[3].startswith("---") and lines[4].startswith("+++"):
-                    triple_neg_file_name = lines[3].split(" ", 1)[1]
-                    triple_pos_file_name = lines[4].split(" ", 1)[1]
+                    previous_file_name = lines[3].split(" ", 1)[1]
+                    updated_file_name = lines[4].split(" ", 1)[1]
                     file_status = "renamed_modified"
                 else:
-                    triple_neg_file_name = lines[1].split(" ", 2)[2] #split at character " " with at most 2 times.
-                    triple_pos_file_name = lines[2].split(" ", 2)[2]
+                    previous_file_name = lines[1].split(" ", 2)[2] #split at character " " with at most 2 times.
+                    updated_file_name = lines[2].split(" ", 2)[2]
                     file_status = "renamed"
             elif lines[1].startswith("new file mode"):
-                triple_neg_file_name = lines[2].split(" ", 1)[1]
-                triple_pos_file_name = lines[3].split(" ", 1)[1]
+                previous_file_name = lines[2].split(" ", 1)[1]
+                updated_file_name = lines[3].split(" ", 1)[1]
                 file_status = "new"
             elif lines[1].startswith("copy from"):
                 if "---" in lines[3] and "+++" in lines[4]:
-                    triple_neg_file_name = lines[3].split(" ", 1)[1]
-                    triple_pos_file_name = lines[4].split(" ", 1)[1]
+                    previous_file_name = lines[3].split(" ", 1)[1]
+                    updated_file_name = lines[4].split(" ", 1)[1]
                     file_status = "copied"
                 else:
-                    triple_neg_file_name = lines[1].split(" ", 1)[1]
-                    triple_pos_file_name = lines[2].split(" ", 1)[1]
+                    previous_file_name = lines[1].split(" ", 1)[1]
+                    updated_file_name = lines[2].split(" ", 1)[1]
                     file_status = "copied"
             else:
                 continue
 
-            file_changes.append((triple_neg_file_name, triple_pos_file_name, file_status))
+            file_changes.append((previous_file_name, updated_file_name, file_status))
 
         return (changeset_datetime, parent_hashes, file_changes)
 
@@ -232,18 +225,27 @@ def obtain_changeset_info(Changeset_Link):
         traceback.print_exc()
         exit()
 
-def save_changeset_info(changeset_info_record):
-    global conn_str, save_changeset_parent_child_hashes_query, save_commit_file_query
+def save_changeset_properties(changeset_hash_Id, changeset_properties):
+    global conn_str, save_changeset_parent_hashes_query, save_commit_file_query
     attempt_number = 1
-    max_retries = 999 # Number of max attempts if deadlock encountered.
+    max_retries = 999 # Number of max attempts if fail sql execution (such as deadlock issue).
 
     while attempt_number <= max_retries:
         try:
-            changeset_datetime, parent_hashes, file_changes = changeset_info_record
+            changeset_datetime, parent_hashes, file_changes = changeset_properties # May not need 'changeset_datetime' because it has been mined?
             conn = pyodbc.connect(conn_str)
             cursor = conn.cursor()
 
-            cursor.execute(save_changeset_parent_child_hashes_query, ())
+            # Save parent hashes:
+            cursor.execute(save_changeset_parent_hashes_query, (parent_hashes, changeset_hash_Id))
+
+            # Save commit files:
+            for file_change in file_changes:
+                previous_file_name, updated_file_name, file_status = file_change
+                cursor.execute(save_commit_file_query, (changeset_hash_Id, previous_file_name, updated_file_name, file_status))
+
+            conn.commit()
+            break
 
         except pyodbc.Error as e:
             error_code = e.args[0]
@@ -272,23 +274,23 @@ def save_changeset_info(changeset_info_record):
 ##################################################################################################### 
 
 if __name__ == "__main__":
-    # parser = argparse.ArgumentParser(description="")
-    # parser.add_argument('arg_1', type=int, help='Argument 1')
-    # parser.add_argument('arg_2', type=int, help='Argument 2')
-    # args = parser.parse_args()
-    # start_row = args.arg_1
-    # end_row = args.arg_2
-    start_row = 4400
-    end_row = 4400
+    parser = argparse.ArgumentParser(description="")
+    parser.add_argument('arg_1', type=int, help='Argument 1')
+    parser.add_argument('arg_2', type=int, help='Argument 2')
+    args = parser.parse_args()
+    start_row = args.arg_1
+    end_row = args.arg_2
 
-    #list_of_records = get_records_to_process(start_row, end_row)
-    list_of_records = []
-    list_of_records.append(('4400', '26cce0d3e1030a3ede35b55e257dcf1e36539153', '840877', '/mozilla-central/rev/26cce0d3e1030a3ede35b55e257dcf1e36539153', False))
+    list_of_records = get_records_to_process(start_row, end_row)
+
+    # Test records
+    # list_of_records = []
+    # list_of_records.append(('4400', '26cce0d3e1030a3ede35b55e257dcf1e36539153', '840877', '/mozilla-central/rev/26cce0d3e1030a3ede35b55e257dcf1e36539153', False))
     
     record_count = len(list_of_records)
 
     for record in list_of_records:
-        Row_Num, changeset_hash_Id, Bug_Ids, Changeset_Link, Is_Done_Parent_Child_Hashes = record
+        Row_Num, changeset_hash_Id, Bug_Ids, Changeset_Link, Parent_Hashes = record
 
         print(f"[{strftime('%m/%d/%Y %H:%M:%S', localtime())}] Remainings: {str(record_count)}. Process changeset {changeset_hash_Id}...", end="", flush=True)
 
@@ -307,10 +309,10 @@ if __name__ == "__main__":
             print("Skipped - Bugs Not 'Resolved'")
             continue
 
-        changeset_info_record = obtain_changeset_info(Changeset_Link)
+        changeset_properties = obtain_changeset_properties(Changeset_Link)
 
         # Save to database:
-        save_changeset_info(changeset_hash_Id, Bug_Ids, changeset_info_record)
+        save_changeset_properties(changeset_hash_Id, changeset_properties)
 
         print("Done")
         record_count -= 1

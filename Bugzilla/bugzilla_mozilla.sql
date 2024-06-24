@@ -120,11 +120,11 @@ ORDER BY Row_Num ASC;
 
 --------------------------------------------------
 --------------------------------------------------
-/* CRAWLING FOR CHANGESET PARENT CHILD HASHES IN EACH CHANGESET (IGNORE BACKED OUT BUGS AND BACKED OUT CHANGESETS */
+/* CRAWLING FOR CHANGESET PARENT HASHES IN EACH CHANGESET (IGNORE BACKED OUT BUGS AND BACKED OUT CHANGESETS */
 --------------------------------------------------
 --------------------------------------------------
 -- Blocker: (1) Wait until the crawlers finished processing Backout_Hashes. (2) going through records that [Does_Required_Human_Inspection] = 1.
--- TODO: Get parent child hashes in [Bugzilla].[changeset_links].
+-- TODO: Get parent hashes in [Bugzilla].[changeset_links].
 -- TODO: Get parent child hashes in [Bugzilla_Mozilla_Changesets].
 -- Algorithm note: 
 	-- Double check to ensure the commit isn't backed out.
@@ -137,18 +137,18 @@ WITH Q1 AS (
 		,Hash_Id
 		,Bug_Ids
 		,Changeset_Link
-		,Is_Done_Parent_Child_Hashes
+		,Parent_Hashes
 	FROM Bugzilla_Mozilla_Changesets
 	WHERE (Backed_Out_By IS NULL OR Backed_Out_By = '')
 		AND (Bug_Ids IS NOT NULL AND Bug_Ids <> '' AND Bug_Ids <> '0')
 		AND Is_Backed_Out_Changeset = '0'
 )
-SELECT Row_Num, Hash_Id, Bug_Ids, Changeset_Link, Is_Done_Parent_Child_Hashes
+SELECT Row_Num, Hash_Id, Bug_Ids, Changeset_Link, Parent_Hashes
 FROM Q1
 WHERE 1=1
---AND Is_Done_Parent_Child_Hashes = 1 -- Include records have been processed.
-AND Is_Done_Parent_Child_Hashes = 0 -- Include records have not been processed.
---AND Row_Num BETWEEN 0 AND 1000
+--AND Parent_Hashes LIKE '%FINISHED_CHANGESET_PROPERTIES_CRAWLING |' -- Include records have been processed.
+AND (Parent_Hashes IS NULL OR Parent_Hashes NOT LIKE '%FINISHED_CHANGESET_PROPERTIES_CRAWLING |') -- Include records have not been processed.
+AND Row_Num BETWEEN 0 AND 10
 
 
 --------------------------------------------------------------------------------------- -------
@@ -165,3 +165,12 @@ ORDER BY inserted_on DESC;
 select hash_id, changeset_summary, Backout_Hashes from Bugzilla_Mozilla_Changesets where bug_ids = '' and changeset_summary like '%back%out%';
 
 -- TODO: Handle cases when the filename is renamed (compare with the same filename at the 'tip' changeset, if different, backtracking until we find the match fileName.
+
+
+-- Testing records:
+select * from Bugzilla_Mozilla_Changesets where Hash_Id='26cce0d3e1030a3ede35b55e257dcf1e36539153'
+select * from Bugzilla_Mozilla_Changeset_Files;
+
+/*
+delete from Bugzilla_Mozilla_Changeset_Files
+*/
