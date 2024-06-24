@@ -94,25 +94,25 @@ FROM Bugzilla where changeset_links like '% | FINISHED_CHANGESET_LINKS_CRAWLING 
 --------------------------------------------------
 --------------------------------------------------
 --TODO: Process of changeset links found in the comments as well (Blocker: Rayhan set up crawlers to crawl for changeset links first)
---TODO: Another way to find backout hashes is in the [Commit_Summary], no need to make any external API requests.
+--TODO: Another way to find backout hashes is in the [Changeset_Summary], no need to make any external API requests.
 --TODO: After updated Backout_Hashes, for any records that doesn't have at least one back out hash, manually check it
 
-select count(*) from Bugzilla_Mozilla_ShortLog;
---delete from Bugzilla_Mozilla_ShortLog;
+select count(*) from Bugzilla_Mozilla_Changesets;
+--delete from Bugzilla_Mozilla_Changesets;
 
 
 -- Get all back out commits with at least some bug ids:
 -- Divide 6 processes (each handles 5888 records):
 	-- [6606, 12536], [12537, 18435], [18436, 24505], [24506, 30437], [30438, 36782], [36783, 42177]
 WITH Q1 AS(
-	SELECT ROW_NUMBER() OVER(ORDER BY Hash_Id ASC) AS Row_Num, Hash_Id, Commit_Link, Backout_Hashes FROM Bugzilla_Mozilla_ShortLog
-	WHERE Is_Backed_Out_Commit = 1
+	SELECT ROW_NUMBER() OVER(ORDER BY Hash_Id ASC) AS Row_Num, Hash_Id, Changeset_Link, Backout_Hashes FROM Bugzilla_Mozilla_Changesets
+	WHERE Is_Backed_Out_Changeset = 1
 	AND Bug_Ids <> ''
 )
-SELECT Row_Num, Hash_Id, Commit_Link, Backout_Hashes from Q1
+SELECT Row_Num, Hash_Id, Changeset_Link, Backout_Hashes from Q1
 WHERE 1=1 
---AND Backout_Hashes IS NULL -- Include records have not been processes
-AND Backout_Hashes IS NOT NULL -- Include records have been processes
+AND Backout_Hashes IS NULL -- Include records have not been processes
+--AND Backout_Hashes IS NOT NULL -- Include records have been processes
 --AND Row_Num BETWEEN 6606 AND 6608
 ORDER BY Row_Num ASC; 
 
@@ -125,25 +125,25 @@ ORDER BY Row_Num ASC;
 --------------------------------------------------
 -- Blocker: (1) Wait until the crawlers finished processing Backout_Hashes. (2) going through records that [Does_Required_Human_Inspection] = 1.
 -- TODO: Get parent child hashes in [Bugzilla].[changeset_links].
--- TODO: Get parent child hashes in [Bugzilla_Mozilla_ShortLog].
+-- TODO: Get parent child hashes in [Bugzilla_Mozilla_Changesets].
 -- Algorithm note: 
 	-- Double check to ensure the commit isn't backed out.
 	-- Check if the bug related to this commit is fixed and resolved.
 
--- Obtains list of changeset in [Bugzilla_Mozilla_ShortLog]:
+-- Obtains list of changeset in [Bugzilla_Mozilla_Changesets]:
 	-- Each changesets could have multiple bug ids (Probably just because it is a backed out commit. So, if the bug is not 'fixed', then don't consider.
 WITH Q1 AS (
 	SELECT ROW_NUMBER() OVER(ORDER BY Hash_Id ASC) AS Row_Num
 		,Hash_Id
 		,Bug_Ids
-		,Commit_Link
+		,Changeset_Link
 		,Is_Done_Parent_Child_Hashes
-	FROM Bugzilla_Mozilla_ShortLog
+	FROM Bugzilla_Mozilla_Changesets
 	WHERE (Backed_Out_By IS NULL OR Backed_Out_By = '')
 		AND (Bug_Ids IS NOT NULL AND Bug_Ids <> '' AND Bug_Ids <> '0')
-		AND Is_Backed_Out_Commit = '0'
+		AND Is_Backed_Out_Changeset = '0'
 )
-SELECT Row_Num, Hash_Id, Bug_Ids, Commit_Link, Is_Done_Parent_Child_Hashes
+SELECT Row_Num, Hash_Id, Bug_Ids, Changeset_Link, Is_Done_Parent_Child_Hashes
 FROM Q1
 WHERE 1=1
 --AND Is_Done_Parent_Child_Hashes = 1 -- Include records have been processed.
@@ -155,16 +155,13 @@ AND Is_Done_Parent_Child_Hashes = 0 -- Include records have not been processed.
 ----------------------------------------------------------------------------------------------
 /* WORKING AREA */
 
-/*
-select * from bugzilla where id=61;
-update Bugzilla
-set changeset_links = 'https://just_for_testing.com/ | FINISHED_CHANGESET_LINKS_CRAWLING |'
-where id='61' and (changeset_links is null or changeset_links not like '%FINISHED_CHANGESET_LINKS_CRAWLING |')
-*/
 
-
-
--- Check error log:
+-- TODO: Check error log:
 SELECT inserted_on AS Bugzilla_Error_Log,* FROM Bugzilla_Error_Log
 WHERE inserted_on > '2024-06-10 02:53:35.143' -- Anything before this datetime belongs to `Bugzilla_legacy`
 ORDER BY inserted_on DESC;
+
+-- TODO: Go through each of the changeset that have the keyword backed out in the summary but Backout_Hashes is empty
+select hash_id, changeset_summary, Backout_Hashes from Bugzilla_Mozilla_Changesets where bug_ids = '' and changeset_summary like '%back%out%';
+
+-- TODO: Handle cases when the filename is renamed (compare with the same filename at the 'tip' changeset, if different, backtracking until we find the match fileName.

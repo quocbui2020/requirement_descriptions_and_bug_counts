@@ -21,15 +21,15 @@ conn_str = 'DRIVER={ODBC Driver 18 for SQL Server};' \
            'Trusted_Connection=yes;'
 
 # Prepare the SQL queries:
-insert_bugzilla_mozilla_shortlog_query = '''
-    INSERT INTO [dbo].[Bugzilla_Mozilla_ShortLog]
+insert_Bugzilla_Mozilla_Changesets_query = '''
+    INSERT INTO [dbo].[Bugzilla_Mozilla_Changesets]
         ([Hash_Id]
-        ,[Commit_Summary]
+        ,[Changeset_Summary]
         ,[Bug_Ids]
-        ,[Commit_Link]
+        ,[Changeset_Link]
         ,[Mercurial_Type]
         ,[Changeset_Datetime]
-        ,[Is_Backed_Out_Commit]
+        ,[Is_Backed_Out_Changeset]
         ,[Backed_Out_By]
         ,[Does_Required_Human_Inspection]
         ,[Inserted_On])
@@ -54,24 +54,24 @@ create_bugzilla_error_log_query = '''
 
 get_backout_commits_query = '''
 WITH Q1 AS(
-	SELECT ROW_NUMBER() OVER(ORDER BY Hash_Id ASC) AS Row_Num, Hash_Id, Commit_Link, Backout_Hashes FROM Bugzilla_Mozilla_ShortLog
-	WHERE Is_Backed_Out_Commit = 1
+	SELECT ROW_NUMBER() OVER(ORDER BY Hash_Id ASC) AS Row_Num, Hash_Id, Changeset_Link, Backout_Hashes FROM Bugzilla_Mozilla_Changesets
+	WHERE Is_Backed_Out_Changeset = 1
 	AND Bug_Ids <> ''
 )
-SELECT Hash_Id, Commit_Link, Row_Num, Backout_Hashes from Q1
+SELECT Hash_Id, Changeset_Link, Row_Num, Backout_Hashes from Q1
 WHERE Row_Num BETWEEN ? AND ?
 AND Backout_Hashes IS NULL -- Include records have not been processes
 ORDER BY Row_Num ASC; 
 '''
 
 save_backout_hashes_query = '''
-    UPDATE [dbo].[Bugzilla_Mozilla_ShortLog]
+    UPDATE [dbo].[Bugzilla_Mozilla_Changesets]
     SET Backout_Hashes = ?
     WHERE Backout_Hashes IS NULL and Hash_Id = ?
 '''
 
 set_back_out_by_field_query = '''
-    UPDATE Bugzilla_Mozilla_ShortLog
+    UPDATE Bugzilla_Mozilla_Changesets
     SET Backed_Out_By = ?
     WHERE Hash_Id = ?
 '''
@@ -112,10 +112,10 @@ def crawl_mozilla_central_shortlog(hash_id, max_retries=5):
             changeset_link = row[0]
             extracted_hash_id = changeset_link.split('/')[-1]
             changeset_datetime = row[1].strip()
-            commit_summary = f"{row[2]} - {row[3]}"
+            Changeset_Summary = f"{row[2]} - {row[3]}"
 
             # Extract bug_ids
-            bug_id_matches = re.findall(r'show_bug.cgi\?id=(\d+)', commit_summary)
+            bug_id_matches = re.findall(r'show_bug.cgi\?id=(\d+)', Changeset_Summary)
             if bug_id_matches:
                 bug_ids = ' | '.join(bug_id_matches)
                 Does_Required_Human_Inspection = False
@@ -124,10 +124,10 @@ def crawl_mozilla_central_shortlog(hash_id, max_retries=5):
                 Does_Required_Human_Inspection = True
 
             # Check for backout keywords
-            if re.search(r'\bback.{0,8}out\b', commit_summary, re.IGNORECASE):
-                Is_Backed_Out_Commit = True
+            if re.search(r'\bback.{0,8}out\b', Changeset_Summary, re.IGNORECASE):
+                Is_Backed_Out_Changeset = True
             else:
-                Is_Backed_Out_Commit = False
+                Is_Backed_Out_Changeset = False
 
             # Add the information to the list
             changeset_info_list.append({
@@ -136,8 +136,8 @@ def crawl_mozilla_central_shortlog(hash_id, max_retries=5):
                 "changeset_datetime": changeset_datetime,
                 "bug_ids": bug_ids,
                 "Does_Required_Human_Inspection": Does_Required_Human_Inspection,
-                "commit_summary": commit_summary,
-                "Is_Backed_Out_Commit": Is_Backed_Out_Commit
+                "Changeset_Summary": Changeset_Summary,
+                "Is_Backed_Out_Changeset": Is_Backed_Out_Changeset
             })
 
         # Define the regular expression pattern for extracting next_hash
@@ -162,7 +162,7 @@ def crawl_mozilla_central_shortlog(hash_id, max_retries=5):
 
 # save_shortlog_to_db: 
 def save_shortlog_to_db(changeset_info):
-    global conn_str, insert_bugzilla_mozilla_shortlog_query
+    global conn_str, insert_Bugzilla_Mozilla_Changesets_query
 
     # Connect to the database
     conn = pyodbc.connect(conn_str)
@@ -173,24 +173,24 @@ def save_shortlog_to_db(changeset_info):
         for record in changeset_info:
             # Extract values from the record
             hash_id = record['hash_id']
-            commit_summary = record['commit_summary']
+            Changeset_Summary = record['Changeset_Summary']
             bug_ids = record['bug_ids'] if record['bug_ids'] else ''
             changeset_link = record['changeset_link']
             mercurial_type = "mozilla-central"
             changeset_datetime = record['changeset_datetime']
-            is_backed_out_commit = int(record['Is_Backed_Out_Commit'])
+            Is_Backed_Out_Changeset = int(record['Is_Backed_Out_Changeset'])
             backed_out_by = None
             does_required_human_inspection = int(record['Does_Required_Human_Inspection'])
 
             # Execute the SQL query per record in the changeset_info
-            cursor.execute(insert_bugzilla_mozilla_shortlog_query, 
+            cursor.execute(insert_Bugzilla_Mozilla_Changesets_query, 
                            hash_id, 
-                           commit_summary, 
+                           Changeset_Summary, 
                            bug_ids, 
                            changeset_link, 
                            mercurial_type, 
                            changeset_datetime,
-                           is_backed_out_commit, 
+                           Is_Backed_Out_Changeset, 
                            backed_out_by, 
                            does_required_human_inspection)
         
@@ -229,9 +229,9 @@ def get_backout_commits(arg_1, arg_2):
         cursor.close()
         conn.close()
 
-def get_backout_hashes_by(Commit_Link):
+def get_backout_hashes_by(Changeset_Link):
     base_url = f"https://hg.mozilla.org"
-    request_url = base_url + str(Commit_Link)
+    request_url = base_url + str(Changeset_Link)
     
     set_of_backouted_hashes = set()
 
@@ -332,15 +332,15 @@ if __name__ == "__main__":
     #     if next_hash == "no_next_hash":
     #         break
 
-    ## Step 2: For each backout commit, retreated the backout hashes and and updated 'Backout_Hashes' and 'Is_Backed_Out_Commit'
+    ## Step 2: For each backout commit, retreated the backout hashes and and updated 'Backout_Hashes' and 'Is_Backed_Out_Changeset'
     list_of_commits = get_backout_commits(arg_1, arg_2)
     record_count = len(list_of_commits)
 
     for commit in list_of_commits:
-        Backed_Out_By, Commit_Link, Row_Num, Backout_Hashes = commit
+        Backed_Out_By, Changeset_Link, Row_Num, Backout_Hashes = commit
 
         print(f"[{strftime('%m/%d/%Y %H:%M:%S', localtime())}] Remainings: {str(record_count)}. Process hash {Backed_Out_By}...", end="", flush=True)
-        set_of_backouted_hashes = get_backout_hashes_by(Commit_Link)
+        set_of_backouted_hashes = get_backout_hashes_by(Changeset_Link)
         save_backouted_hashes(Backed_Out_By, set_of_backouted_hashes)
         print("Done")
         record_count -= 1
