@@ -138,19 +138,21 @@ WITH Q1 AS (
 		,Bug_Ids
 		,Changeset_Link
 		,Parent_Hashes
+		,Child_Hashes
+		,Backed_Out_By
 	FROM Bugzilla_Mozilla_Changesets
-	WHERE (Backed_Out_By IS NULL OR Backed_Out_By = '')
-		AND (Bug_Ids IS NOT NULL AND Bug_Ids <> '' AND Bug_Ids <> '0')
-		AND Is_Backed_Out_Changeset = '0'
+	WHERE (Bug_Ids IS NOT NULL AND Bug_Ids <> '' AND Bug_Ids <> '0') -- No association to any bugs.
+		AND Is_Backed_Out_Changeset = '0' -- Already been processed
 )
-SELECT Row_Num, Hash_Id, Bug_Ids, Changeset_Link, Parent_Hashes
+SELECT Row_Num, Hash_Id, Bug_Ids, Changeset_Link, Parent_Hashes, Child_Hashes
 FROM Q1
 WHERE 1=1
---AND Parent_Hashes LIKE '%FINISHED_CHANGESET_PROPERTIES_CRAWLING |' -- Include records have been processed.
-AND (Parent_Hashes IS NULL OR Parent_Hashes NOT LIKE '%FINISHED_CHANGESET_PROPERTIES_CRAWLING |') -- Include records have not been processed.
-AND Row_Num BETWEEN 0 AND 10
+AND (Backed_Out_By IS NULL OR Backed_Out_By = '')
+AND Parent_Hashes IS NOT NULL -- Include records have been processed.
+--AND Parent_Hashes IS NULL -- Include records have not been processed.
+AND Row_Num BETWEEN 0 AND 15
 
-
+select * from Bugzilla_Mozilla_Changesets where Hash_Id in('0000b936e5c67d1fa428c263633bcb27325a195b')
 --------------------------------------------------------------------------------------- -------
 ----------------------------------------------------------------------------------------------
 /* WORKING AREA */
@@ -168,9 +170,12 @@ select hash_id, changeset_summary, Backout_Hashes from Bugzilla_Mozilla_Changese
 
 
 -- Testing records:
-select * from Bugzilla_Mozilla_Changesets where Hash_Id='26cce0d3e1030a3ede35b55e257dcf1e36539153'
-select * from Bugzilla_Mozilla_Changeset_Files;
-
+select * from Bugzilla_Mozilla_Changesets where Hash_Id='26cce0d3e1030a3ede35b55e257dcf1e36539153' -- Test case for deleted, new, renamed, copied file names
+select * from Bugzilla_Mozilla_Changesets where Hash_Id='0178681fab81bb70450098ee50f04ff9c34fc02b' -- Test case for 'backed out by' changeset (4b02380c0bbb5151f1a1f4606c29f2a1cbb70225)
+select * from Bugzilla_Mozilla_Changeset_Files order by Changeset_Hash_ID;
+select count(distinct changeset_hash_id) from bugzilla_mozilla_changeset_files;
 /*
+update Bugzilla_Mozilla_Changesets set Parent_Hashes=null, Child_Hashes=null where Hash_Id in('26cce0d3e1030a3ede35b55e257dcf1e36539153', '0178681fab81bb70450098ee50f04ff9c34fc02b')
+update Bugzilla_Mozilla_Changesets set Backed_out_by='4b02380c0bbb5151f1a1f4606c29f2a1cbb70225' where hash_id = '0178681fab81bb70450098ee50f04ff9c34fc02b'
 delete from Bugzilla_Mozilla_Changeset_Files
 */
