@@ -36,6 +36,7 @@ get_records_to_process_query = '''
     WHERE Parent_Hashes IS NULL -- Records have not been processed.
         AND (Backed_Out_By IS NULL OR Backed_Out_By = '')
         AND Row_Num BETWEEN ? AND ?
+    ORDER BY Row_Num ASC
 '''
 
 save_changeset_parent_child_hashes_query = '''
@@ -160,8 +161,8 @@ def obtain_changeset_properties_raw_rev(changeset_link):
                 time.sleep(10)
                 attempt_number += 1
             else:
-                print(f"Request has status code other than 200. Request url: {request_url}.")
-                exit() # if code status is not 200 or 429. It should require human interaction.
+                print(f"Request has status code other than 200. Request url: {request_url}. Status code: {response.status_code}.")
+                time.sleep(20)
             
             if attempt_number == max_attempt:
                 print(f"Failed too many request attempts. Status code: {response.status_code}. Exit program.")
@@ -240,7 +241,7 @@ def obtain_changeset_properties_rev(changeset_link):
             response = requests.get(request_url)
             if response.status_code == 200:
                 break
-            elif response.status_code == 429:
+            elif response.status_code == 429:   # 429: Exceed request rate
                 print("Failed with 429 code")
                 print("Sleep for 10s and retry...", end="", flush=True)
                 time.sleep(10)
@@ -291,12 +292,24 @@ def obtain_changeset_properties_rev(changeset_link):
                 updated_file_name = re.search(r'\+\+\+ (.*)<', lines[1]).group(1)
                 file_status = "modified"
             elif "deleted file mode" in lines[0]:
-                previous_file_name = re.search(r'--- (.*)<', lines[1]).group(1)
-                updated_file_name = re.search(r'\+\+\+ (.*)<', lines[2]).group(1)
+                if '">index' in lines[1]:   #Example case '7fe80c3c0f1ce84d05708d448f0394c04890f4d6' with content: <a href="#l7.2"></a><span id="l7.2">index ce953a292517f8fc9f584b7d844e1c0eafe2ef85..0000000000000000000000000000000000000000</span>
+                    previous_file_name = re.search(r'">index ([a-fA-F0-9]+)\.\.', lines[1]).group(1)
+                    updated_file_name = re.search(r'\.\.([a-fA-F0-9]+)<', lines[1]).group(1)
+                elif '</pre>' in lines[0]: #Case '6002440818d91011fb0a1753def417dba834f529'
+                    continue
+                else:
+                    previous_file_name = re.search(r'--- (.*)<', lines[1]).group(1)
+                    updated_file_name = re.search(r'\+\+\+ (.*)<', lines[2]).group(1)
                 file_status = "deleted"
             elif "new file mode" in lines[0]:
-                previous_file_name = re.search(r'--- (.*)<', lines[1]).group(1)
-                updated_file_name = re.search(r'\+\+\+ (.*)<', lines[2]).group(1)
+                if '">index' in lines[1]:   #Example case '000bf107254d873d4a1d1d0401274b97b5ce9ac8' (issue same as 'deleted' one)
+                    previous_file_name = re.search(r'">index ([a-fA-F0-9]+)\.\.', lines[1]).group(1)
+                    updated_file_name = re.search(r'\.\.([a-fA-F0-9]+)<', lines[1]).group(1)
+                elif '</pre>' in lines[0]:
+                    continue    #Skip it. #Example case '000bf107254d873d4a1d1d0401274b97b5ce9ac8' at line 22946 with content: <a href="#l82.1"></a><span id="l82.1">new file mode 100644</span></pre>
+                else:
+                    previous_file_name = re.search(r'--- (.*)<', lines[1]).group(1)
+                    updated_file_name = re.search(r'\+\+\+ (.*)<', lines[2]).group(1)
                 file_status = "new"
             elif "rename from" in lines[0] and "rename to" in lines[1]:
                 if "---" in lines[2] and "+++" in lines[3]:
@@ -393,6 +406,9 @@ if __name__ == "__main__":
     start_row = args.arg_1
     end_row = args.arg_2
 
+    # start_row = '73955'
+    # end_row = '147680'
+
     list_of_records = get_records_to_process(start_row, end_row)
 
     # Test records
@@ -405,7 +421,7 @@ if __name__ == "__main__":
     for record in list_of_records:
         Row_Num, changeset_hash_Id, Bug_Ids, Changeset_Link, Parent_Hashes = record
 
-        print(f"[{strftime('%m/%d/%Y %H:%M:%S', localtime())}] Remainings: {str(record_count)}. Scraping properties: {changeset_hash_Id}...", end="", flush=True)
+        print(f"[{strftime('%m/%d/%Y %H:%M:%S', localtime())}] Remainings: {str(record_count)}. Scraping properties of {changeset_hash_Id}...", end="", flush=True)
 
         # Iterate through 'Bug_Ids' and check if any of them are 'resolved' bugs. If not, no need to process further
         list_of_bug_id = Bug_Ids.split(" | ")
