@@ -158,10 +158,16 @@ SELECT count(*)--Row_Num, Hash_Id, Bug_Ids, Changeset_Link, Parent_Hashes, Child
 FROM Q1
 WHERE 1=1
 AND (Backed_Out_By IS NULL OR Backed_Out_By = '')
-AND Parent_Hashes IS NOT NULL -- Include records have been processed.
---AND Parent_Hashes IS NULL -- Include records have not been processed.
+--AND Parent_Hashes IS NOT NULL -- Include records have been processed.
+AND Parent_Hashes IS NULL -- Include records have not been processed.
 AND Row_Num BETWEEN 0 AND 4000000
 ORDER BY Row_Num asc;
+
+select * from Bugzilla_Mozilla_Changesets where Hash_Id='000bf107254d873d4a1d1d0401274b97b5ce9ac8'
+select * from Bugzilla_Mozilla_Changeset_Files where Changeset_Hash_ID='000bf107254d873d4a1d1d0401274b97b5ce9ac8'
+
+select count(*) from Bugzilla_Mozilla_Changeset_Files order by Changeset_Hash_ID;
+select count(distinct changeset_hash_id) from bugzilla_mozilla_changeset_files;
 
 ----------------------------------------------------------------------------------------------
 ----------------------------------------------------------------------------------------------
@@ -183,14 +189,17 @@ select hash_id, changeset_summary, Backout_Hashes from Bugzilla_Mozilla_Changese
 select * from Bugzilla_Mozilla_Changesets where Hash_Id='26cce0d3e1030a3ede35b55e257dcf1e36539153' -- Test case for deleted, new, renamed, copied file names
 select * from Bugzilla_Mozilla_Changesets where Hash_Id='4b02380c0bbb5151f1a1f4606c29f2a1cbb70225' -- Test case for 'backed out by' changeset (4b02380c0bbb5151f1a1f4606c29f2a1cbb70225)
 
-select top 100 * from Bugzilla_Mozilla_Changeset_Files order by Changeset_Hash_ID;
-select count(distinct changeset_hash_id) from bugzilla_mozilla_changeset_files;
-/*
-update Bugzilla_Mozilla_Changesets set Parent_Hashes=null, Child_Hashes=null where Hash_Id in('1ffe2e3d6e19a351575ac986c43155ed8e8d90bc')
-update Bugzilla_Mozilla_Changesets set Backed_out_by='4b02380c0bbb5151f1a1f4606c29f2a1cbb70225' where hash_id = '0178681fab81bb70450098ee50f04ff9c34fc02b'
-delete from Bugzilla_Mozilla_Changeset_Files where Changeset_Hash_ID='1ffe2e3d6e19a351575ac986c43155ed8e8d90bc'
-*/
 
+select * from Bugzilla_Mozilla_Changeset_Files --cpp, py, js, cc?
+where Updated_File_Name like '%.py'
 
-select * from Bugzilla_Mozilla_Changesets where Hash_Id='000bf107254d873d4a1d1d0401274b97b5ce9ac8'
-select * from Bugzilla_Mozilla_Changeset_Files where Changeset_Hash_ID='000bf107254d873d4a1d1d0401274b97b5ce9ac8'
+select * from Bugzilla_Mozilla_Changesets where hash_id='c7bba86f5e02f46a1c46aa891bce3efebbebaf56'
+
+select * from Bugzilla_Mozilla_Changesets where hash_id like '6cb490697a27%'
+
+select top 10 * from Bugzilla_Mozilla_Changeset_Files
+
+SELECT top 2 Changeset_Hash_ID, COUNT(*) AS RecordCount
+FROM Bugzilla_Mozilla_Changeset_Files
+GROUP BY Changeset_Hash_ID
+order by RecordCount desc;

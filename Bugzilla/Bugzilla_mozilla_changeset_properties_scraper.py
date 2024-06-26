@@ -163,6 +163,7 @@ def obtain_changeset_properties_raw_rev(changeset_link):
             else:
                 print(f"Request has status code other than 200. Request url: {request_url}. Status code: {response.status_code}.")
                 time.sleep(20)
+                attempt_number += 1
             
             if attempt_number == max_attempt:
                 print(f"Failed too many request attempts. Status code: {response.status_code}. Exit program.")
@@ -212,11 +213,11 @@ def obtain_changeset_properties_raw_rev(changeset_link):
                 if "---" in lines[3] and "+++" in lines[4]:
                     previous_file_name = lines[3].split(" ", 1)[1]
                     updated_file_name = lines[4].split(" ", 1)[1]
-                    file_status = "copied"
                 else:
                     previous_file_name = lines[1].split(" ", 1)[1]
                     updated_file_name = lines[2].split(" ", 1)[1]
-                    file_status = "copied"
+                    
+                file_status = "copied"
             else:
                 continue
 
