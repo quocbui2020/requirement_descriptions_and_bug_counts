@@ -344,46 +344,59 @@ def obtain_changeset_properties_rev(changeset_link):
         traceback.print_exc()
         exit()
 
-def save_changeset_properties(changeset_hash_Id, changeset_properties):
+def save_changeset_properties(changeset_hash_id, changeset_properties):
     global conn_str, save_changeset_parent_child_hashes_query, save_commit_file_query
     attempt_number = 1
-    max_retries = 999 # Number of max attempts if fail sql execution (such as deadlock issue).
+    max_retries = 999  # Number of max attempts if fail sql execution (such as deadlock issue).
 
-    backed_out_by, changeset_datetime, parent_hashes, child_hashes, file_changes = changeset_properties # No need 'changeset_datetime' because it has been mined?
+    backed_out_by, changeset_datetime, parent_hashes, child_hashes, file_changes = changeset_properties  # No need 'changeset_datetime' because it has been mined?
 
     while attempt_number <= max_retries:
         try:
             conn = pyodbc.connect(conn_str)
             cursor = conn.cursor()
 
-            # Check 'backed_out_by':
-            if backed_out_by != None and backed_out_by != '':
-                cursor.execute('''UPDATE [Bugzilla_Mozilla_Changesets] SET [Backed_Out_By] = ? WHERE Hash_Id = ?''', (backed_out_by, changeset_hash_Id))
+            # Start a transaction
+            cursor.execute("BEGIN TRANSACTION")
+
+            save_changeset_properties_queries = ''
+            params = []
+
+            # Check 'backed_out_by' field:
+            if backed_out_by:
+                save_changeset_properties_queries += "UPDATE [Bugzilla_Mozilla_Changesets] SET [Backed_Out_By] = ? WHERE Hash_Id = ?;"
+                params.extend([backed_out_by, changeset_hash_id])
             else:
                 # Save parent hashes:
-                cursor.execute(save_changeset_parent_child_hashes_query, (parent_hashes, child_hashes, changeset_hash_Id))
+                save_changeset_properties_queries += save_changeset_parent_child_hashes_query + ";"
+                params.extend([parent_hashes, child_hashes, changeset_hash_id])
 
                 # Save commit files:
                 for file_change in file_changes:
                     previous_file_name, updated_file_name, file_status = file_change
-                    cursor.execute(save_commit_file_query, (changeset_hash_Id, previous_file_name, updated_file_name, file_status))
+                    save_changeset_properties_queries += save_commit_file_query + ";"
+                    params.extend([changeset_hash_id, previous_file_name, updated_file_name, file_status])
 
-            conn.commit()
-            
-            if backed_out_by != None and backed_out_by != '':
+            # Execute all queries
+            cursor.execute(save_changeset_properties_queries, params)
+            conn.commit()  # Commit the transaction
+
+            if backed_out_by:
                 return "Backed Out"
             else:
                 return "Done"
 
         except pyodbc.Error as e:
             error_code = e.args[0]
+            cursor.execute("ROLLBACK TRANSACTION")  # Rollback to the beginning of the transaction
             if error_code in ['40001', '40P01']:  # Deadlock error codes
                 attempt_number += 1
                 print("Deadlock.")
-                print(f"Attempt number: {str(attempt_number)}. Sleep for 5 second and try again...", end="", flush=True)
+                print(f"Attempt number: {attempt_number}. Sleeping for 5 seconds before retrying...", end="", flush=True)
                 time.sleep(5)
                 if attempt_number < max_retries:
                     continue
+
             print(f"\nError: {e}")
             traceback.print_exc()
             exit()
