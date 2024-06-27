@@ -27,6 +27,7 @@ get_records_to_process_query = '''
             ,Changeset_Link
             ,Parent_Hashes
             ,Backed_Out_By
+            ,Task_Group
         FROM Bugzilla_Mozilla_Changesets
         WHERE (Bug_Ids IS NOT NULL AND Bug_Ids <> '' AND Bug_Ids <> '0')
             AND Is_Backed_Out_Changeset = '0'
@@ -35,6 +36,7 @@ get_records_to_process_query = '''
     FROM Q1
     WHERE Parent_Hashes IS NULL -- Records have not been processed.
         AND (Backed_Out_By IS NULL OR Backed_Out_By = '')
+        AND Task_Group = ?
         AND Row_Num BETWEEN ? AND ?
     ORDER BY Row_Num ASC
 '''
@@ -58,7 +60,7 @@ save_commit_file_query = '''
 '''
 
 
-def get_records_to_process(start_row, end_row):
+def get_records_to_process(task_group, start_row, end_row):
     global conn_str, get_records_to_process_query
     attempt_number = 1
     max_retries = 999 # max retry for deadlock issue.
@@ -68,7 +70,7 @@ def get_records_to_process(start_row, end_row):
             conn = pyodbc.connect(conn_str)
             cursor = conn.cursor()
 
-            cursor.execute(get_records_to_process_query, (start_row, end_row))
+            cursor.execute(get_records_to_process_query, (task_group, start_row, end_row))
             rows = cursor.fetchall()
             return rows
         
@@ -403,14 +405,13 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="")
     parser.add_argument('arg_1', type=int, help='Argument 1')
     parser.add_argument('arg_2', type=int, help='Argument 2')
+    parser.add_argument('arg_3', type=int, help='Argument 3')
     args = parser.parse_args()
     start_row = args.arg_1
     end_row = args.arg_2
+    task_group = args.arg_3
 
-    # start_row = '73955'
-    # end_row = '147680'
-
-    list_of_records = get_records_to_process(start_row, end_row)
+    list_of_records = get_records_to_process(task_group, start_row, end_row)
 
     # Test records
     # list_of_records = []
