@@ -407,9 +407,9 @@ if __name__ == "__main__":
     parser.add_argument('arg_2', type=int, help='Argument 2')
     parser.add_argument('arg_3', type=int, help='Argument 3')
     args = parser.parse_args()
-    start_row = args.arg_1
-    end_row = args.arg_2
-    task_group = args.arg_3
+    task_group = args.arg_1
+    start_row = args.arg_2
+    end_row = args.arg_3
 
     list_of_records = get_records_to_process(task_group, start_row, end_row)
 
