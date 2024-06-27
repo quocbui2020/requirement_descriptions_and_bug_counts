@@ -133,14 +133,16 @@ ORDER BY Row_Num ASC;
 -- Obtains list of changeset in [Bugzilla_Mozilla_Changesets]:
 /*
 Total unprocessed records: 520014 / 8 = 65001
-	1. [17, 73955]
-	2. [73956, 147680]
-	3. [147681, 221577]
-	4. [221578, 295181]
-	5. [295182, 368902]
-	6. [368903, 442730]
-	7. [442731, 516267]
-	8. [516268, 590058]
+	1. [22754, 34123]
+	2. [34124, 45454]
+	3. [45455, 56826]
+	4. [56827, 68247]
+	5. [68248, 102219]
+	6. [102220, 113591]
+	7. [113592, 124900]
+	8. [124901, 136281]
+	9. [136282, 147593]
+   10. [147594, 181750]
 */
 WITH Q1 AS (
 	SELECT ROW_NUMBER() OVER(ORDER BY Hash_Id ASC) AS Row_Num
@@ -150,17 +152,19 @@ WITH Q1 AS (
 		,Parent_Hashes
 		,Child_Hashes
 		,Backed_Out_By
+		,Task_Group
 	FROM Bugzilla_Mozilla_Changesets
 	WHERE (Bug_Ids IS NOT NULL AND Bug_Ids <> '' AND Bug_Ids <> '0') -- No association to any bugs.
 		AND Is_Backed_Out_Changeset = '0' -- Already been processed
 )
-SELECT count(*)--Row_Num, Hash_Id, Bug_Ids, Changeset_Link, Parent_Hashes, Child_Hashes
+SELECT Row_Num, Hash_Id, Bug_Ids, Changeset_Link, Parent_Hashes, Child_Hashes, Backed_Out_By, Task_Group
 FROM Q1
 WHERE 1=1
 AND (Backed_Out_By IS NULL OR Backed_Out_By = '')
 --AND Parent_Hashes IS NOT NULL -- Include records have been processed.
 AND Parent_Hashes IS NULL -- Include records have not been processed.
-AND Row_Num BETWEEN 0 AND 4000000
+AND Task_Group = 1
+--AND Row_Num BETWEEN 0 AND 4000000
 ORDER BY Row_Num asc;
 
 -- Get top 2 changeset that have the most count of file changes:
@@ -200,10 +204,10 @@ select * from Bugzilla_Mozilla_Changesets where Hash_Id='4b02380c0bbb5151f1a1f46
 select * from Bugzilla_Mozilla_Changeset_Files --cpp, py, js, cc?
 where Updated_File_Name like '%.py'
 
-select * from Bugzilla_Mozilla_Changesets where hash_id='c7bba86f5e02f46a1c46aa891bce3efebbebaf56'
+select * from Bugzilla_Mozilla_Changesets where hash_id='0f16abb82c08d5033af4caea5f21a48fb5c267b2'
 
 select * from Bugzilla_Mozilla_Changesets where hash_id like '6cb490697a27%'
 
-select top 10 * from Bugzilla_Mozilla_Changeset_Files
+select * from Bugzilla_Mozilla_Changeset_Files where Changeset_Hash_ID='18bb5c07a3b7402ff1263f8ecd47f07fd86052d0'
 
 
