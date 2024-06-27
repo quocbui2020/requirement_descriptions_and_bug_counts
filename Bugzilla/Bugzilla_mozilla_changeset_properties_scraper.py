@@ -356,9 +356,6 @@ def save_changeset_properties(changeset_hash_id, changeset_properties):
             conn = pyodbc.connect(conn_str)
             cursor = conn.cursor()
 
-            # Start a transaction
-            cursor.execute("BEGIN TRANSACTION")
-
             save_changeset_properties_queries = ''
             params = []
 
@@ -377,8 +374,13 @@ def save_changeset_properties(changeset_hash_id, changeset_properties):
                     save_changeset_properties_queries += save_commit_file_query + ";"
                     params.extend([changeset_hash_id, previous_file_name, updated_file_name, file_status])
 
+            # Start a transaction
+            cursor.execute("BEGIN TRANSACTION")
+
             # Execute all queries
             cursor.execute(save_changeset_properties_queries, params)
+
+            cursor.execute("COMMIT")
             conn.commit()  # Commit the transaction
 
             if backed_out_by:
