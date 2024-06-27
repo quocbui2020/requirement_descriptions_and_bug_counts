@@ -163,11 +163,18 @@ AND Parent_Hashes IS NULL -- Include records have not been processed.
 AND Row_Num BETWEEN 0 AND 4000000
 ORDER BY Row_Num asc;
 
+-- Get top 2 changeset that have the most count of file changes:
+SELECT top 2 Changeset_Hash_ID, COUNT(*) AS RecordCount
+FROM Bugzilla_Mozilla_Changeset_Files
+GROUP BY Changeset_Hash_ID
+order by RecordCount desc;
+
 select * from Bugzilla_Mozilla_Changesets where Hash_Id='000bf107254d873d4a1d1d0401274b97b5ce9ac8'
 select * from Bugzilla_Mozilla_Changeset_Files where Changeset_Hash_ID='000bf107254d873d4a1d1d0401274b97b5ce9ac8'
 
 select count(*) from Bugzilla_Mozilla_Changeset_Files order by Changeset_Hash_ID;
 select count(distinct changeset_hash_id) from bugzilla_mozilla_changeset_files;
+
 
 ----------------------------------------------------------------------------------------------
 ----------------------------------------------------------------------------------------------
@@ -199,7 +206,4 @@ select * from Bugzilla_Mozilla_Changesets where hash_id like '6cb490697a27%'
 
 select top 10 * from Bugzilla_Mozilla_Changeset_Files
 
-SELECT top 2 Changeset_Hash_ID, COUNT(*) AS RecordCount
-FROM Bugzilla_Mozilla_Changeset_Files
-GROUP BY Changeset_Hash_ID
-order by RecordCount desc;
+
