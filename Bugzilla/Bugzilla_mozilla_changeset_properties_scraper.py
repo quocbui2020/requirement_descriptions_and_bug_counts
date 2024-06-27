@@ -56,7 +56,7 @@ save_commit_file_query = '''
         AND target.Updated_File_Name = source.Updated_File_Name)
     WHEN NOT MATCHED THEN
         INSERT ([Changeset_Hash_ID], [Previous_File_Name], [Updated_File_Name], [File_Status], [Inserted_On])
-        VALUES (source.Changeset_Hash_ID, source.Previous_File_Name, source.Updated_File_Name, ?, SYSUTCDATETIME());
+        VALUES (source.Changeset_Hash_ID, source.Previous_File_Name, source.Updated_File_Name, ?, SYSUTCDATETIME())
 '''
 
 
@@ -356,6 +356,11 @@ def save_changeset_properties(changeset_hash_id, changeset_properties):
             conn = pyodbc.connect(conn_str)
             cursor = conn.cursor()
 
+            save_changeset_properties_query_batches = []
+            batch_count = 0
+            batch_size_limit = 100
+
+            # Build batches of queries
             save_changeset_properties_queries = ''
             params = []
 
@@ -374,14 +379,27 @@ def save_changeset_properties(changeset_hash_id, changeset_properties):
                     save_changeset_properties_queries += save_commit_file_query + ";"
                     params.extend([changeset_hash_id, previous_file_name, updated_file_name, file_status])
 
+                    batch_count += 1
+                    if batch_count == batch_size_limit:
+                        save_changeset_properties_query_batches.append((save_changeset_properties_queries, params))
+                        save_changeset_properties_queries = ''
+                        params = []
+                        batch_count = 0
+
+            # Add any remaining queries to the last batch
+            if save_changeset_properties_queries:
+                save_changeset_properties_query_batches.append((save_changeset_properties_queries, params))
+
             # Start a transaction
             cursor.execute("BEGIN TRANSACTION")
 
-            # Execute all queries
-            cursor.execute(save_changeset_properties_queries, params)
+            # Execute batches of queries
+            for batch_query, batch_params in save_changeset_properties_query_batches:
+                cursor.execute(batch_query, batch_params)
 
+             # Commit the transaction
             cursor.execute("COMMIT")
-            conn.commit()  # Commit the transaction
+            conn.commit() 
 
             if backed_out_by:
                 return "Backed Out"
@@ -427,10 +445,11 @@ if __name__ == "__main__":
     end_row = args.arg_3
 
     list_of_records = get_records_to_process(task_group, start_row, end_row)
+    # list_of_records = get_records_to_process(1, 34124, 45454) # Test
 
     # Test records
     # list_of_records = []
-    # list_of_records.append(('4400', '26cce0d3e1030a3ede35b55e257dcf1e36539153', '840877', '/mozilla-central/rev/26cce0d3e1030a3ede35b55e257dcf1e36539153', None)) # Test case for deleted, new, renamed, copied file names
+    # list_of_records.append(('4400', '0f16abb82c08d5033af4caea5f21a48fb5c267b2', '840877', '/mozilla-central/rev/0f16abb82c08d5033af4caea5f21a48fb5c267b2', None)) # Test case for deleted, new, renamed, copied file names
     # list_of_records.append(('4401', '0178681fab81bb70450098ee50f04ff9c34fc02b', '840878', '/mozilla-central/rev/0178681fab81bb70450098ee50f04ff9c34fc02b', None)) # Test case for 'backed out by' changeset
     
     record_count = len(list_of_records)
