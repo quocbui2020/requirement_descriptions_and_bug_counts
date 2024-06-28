@@ -357,10 +357,10 @@ def save_changeset_properties(changeset_hash_id, changeset_properties):
 
             while connection_attempt <= max_connection_attempts:
                 try:
-                    conn = pyodbc.connect(conn_str, timeout=30)  # Increase timeout value
+                    conn = pyodbc.connect(conn_str)  # Increase timeout value
                     break
                 except pyodbc.Error as conn_err:
-                    if conn_err.args[0] in ['08S01']: # Can't establish connection for some reason.
+                    if conn_err.args[0] in ['08S01']: # The connection is broken and recovery is not possible.
                         connection_attempt += 1
                         print(f"08S01.\nConnection attempt {connection_attempt} failed. Retrying in 5 seconds...", end="", flush=True)
                         time.sleep(5)
