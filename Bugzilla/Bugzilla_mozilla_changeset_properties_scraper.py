@@ -15,6 +15,8 @@ import argparse
 conn_str = 'DRIVER={ODBC Driver 18 for SQL Server};' \
            'SERVER=QUOCBUI\\MSSQLSERVER01;' \
            'DATABASE=ResearchDatasets;' \
+           'Connection Timeout=300;' \
+           'Login Timeout=300;' \
            'LongAsMax=yes;' \
            'TrustServerCertificate=yes;' \
            'Trusted_Connection=yes;'
@@ -344,12 +346,29 @@ def save_changeset_properties(changeset_hash_id, changeset_properties):
     global conn_str, save_changeset_parent_child_hashes_query, save_commit_file_query
     attempt_number = 1
     max_retries = 999  # Number of max attempts if fail sql execution (such as deadlock issue).
+    max_connection_attempts = 10  # Number of max attempts to establish a connection.
 
     backed_out_by, changeset_datetime, parent_hashes, child_hashes, file_changes = changeset_properties  # No need 'changeset_datetime' because it has been mined?
 
     while attempt_number <= max_retries:
         try:
-            conn = pyodbc.connect(conn_str)
+            # Attempt to establish a connection with retry logic
+            connection_attempt = 1
+
+            while connection_attempt <= max_connection_attempts:
+                try:
+                    conn = pyodbc.connect(conn_str, timeout=30)  # Increase timeout value
+                    break
+                except pyodbc.Error as conn_err:
+                    if conn_err.args[0] in ['08S01']: # Can't establish connection for some reason.
+                        connection_attempt += 1
+                        print(f"08S01.\nConnection attempt {connection_attempt} failed. Retrying in 5 seconds...", end="", flush=True)
+                        time.sleep(5)
+                    else:
+                        raise conn_err
+            else:
+                raise Exception("Failed to establish a connection after multiple attempts.")
+
             cursor = conn.cursor()
 
             save_changeset_properties_query_batches = []
@@ -407,8 +426,7 @@ def save_changeset_properties(changeset_hash_id, changeset_properties):
             cursor.execute("ROLLBACK TRANSACTION")  # Rollback to the beginning of the transaction
             if error_code in ['40001', '40P01']:  # Deadlock error codes
                 attempt_number += 1
-                print("Deadlock.")
-                print(f"Attempt number: {attempt_number}. Sleeping for 5 seconds before retrying...", end="", flush=True)
+                print(f"Deadlock.\nAttempt number: {attempt_number}. Retrying in 5 seconds...", end="", flush=True)
                 time.sleep(5)
                 if attempt_number < max_retries:
                     continue
