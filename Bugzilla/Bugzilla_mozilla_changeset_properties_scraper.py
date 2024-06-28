@@ -59,7 +59,6 @@ save_commit_file_query = '''
         VALUES (source.Changeset_Hash_ID, source.Previous_File_Name, source.Updated_File_Name, ?, SYSUTCDATETIME())
 '''
 
-
 def get_records_to_process(task_group, start_row, end_row):
     global conn_str, get_records_to_process_query
     attempt_number = 1
@@ -150,25 +149,23 @@ def obtain_changeset_properties_raw_rev(changeset_link):
     request_url = base_url + str(changeset_link)
     request_url = str.replace(request_url, 'rev', 'raw-rev')
     attempt_number = 1
-    max_attempt = 5
+    max_retries = 20
 
     try:
-        while attempt_number <= max_attempt:
+        while attempt_number <= max_retries:
             response = requests.get(request_url)
-            if response.status_code == 200:
+            if response.status_code == 200:  # OK
                 break
-            elif response.status_code == 429:
-                print("Failed with 429 code")
+            # elif response.status_code == 429:  # Code 429: Reach max request limit rate
+            else:
+                print(f"{str(response.status_code)}.")
                 print("Sleep for 10s and retry...", end="", flush=True)
                 time.sleep(10)
-                attempt_number += 1
-            else:
-                print(f"Request has status code other than 200. Request url: {request_url}. Status code: {response.status_code}.")
-                time.sleep(20)
+                print(f"Wake up.\nRetrying...", end="", flush=True)
                 attempt_number += 1
             
-            if attempt_number == max_attempt:
-                print(f"Failed too many request attempts. Status code: {response.status_code}. Exit program.")
+            if attempt_number == max_retries:
+                print(f"Too many failed request attempts. Request url: {request_url}. Exit program.")
                 return None
             
         content = response.text
@@ -189,7 +186,7 @@ def obtain_changeset_properties_raw_rev(changeset_link):
         
         for block in diff_blocks[1:]:
             lines = block.splitlines() # Split by '\n'
-            diff_git_line = lines[0] #ignore this line
+            diff_git_line = lines[0]    # Ignore line[0]
             if lines[1].startswith("---") and lines[2].startswith("+++"):
                 previous_file_name = lines[1].split(" ", 1)[1]
                 updated_file_name = lines[2].split(" ", 1)[1]
@@ -237,24 +234,23 @@ def obtain_changeset_properties_rev(changeset_link):
     base_url = f"https://hg.mozilla.org"
     request_url = base_url + str(changeset_link)
     attempt_number = 1
-    max_attempt = 5
+    max_retries = 20
 
     try:
-        while attempt_number <= max_attempt:
+        while attempt_number <= max_retries:
             response = requests.get(request_url)
             if response.status_code == 200:
                 break
-            elif response.status_code == 429:   # 429: Exceed request rate
-                print("Failed with 429 code")
+            # elif response.status_code == 429:   # Code 429: Reach max request limit rate
+            else:
+                print(f"{str(response.status_code)}.")
                 print("Sleep for 10s and retry...", end="", flush=True)
                 time.sleep(10)
+                print(f"Wake up.\nRetrying...", end="", flush=True)
                 attempt_number += 1
-            else:
-                print(f"Request has status code other than 200. Request url: {request_url}.")
-                exit()  # if code status is not 200 or 429. It should require human interaction.
 
-            if attempt_number == max_attempt:
-                print(f"Failed too many request attempts. Status code: {response.status_code}. Exit program.")
+            if attempt_number == max_retries:
+                print(f"Too many failed request attempts. Request url: {request_url}. Exit program.")
                 return None
 
         content = response.text
