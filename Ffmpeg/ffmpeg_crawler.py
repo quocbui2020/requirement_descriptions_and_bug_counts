@@ -42,7 +42,7 @@ csv.field_size_limit(10**7)  # Setting to 10 million characters
 
 # Connection string
 conn_str = 'DRIVER={ODBC Driver 18 for SQL Server};' \
-           'SERVER=QUOCBUI\\SQLEXPRESS;' \
+           'SERVER=QUOCBUI\MSSQLSERVER01;' \
            'DATABASE=ResearchDatasets;' \
            'LongAsMax=yes;' \
            'TrustServerCertificate=yes;' \
