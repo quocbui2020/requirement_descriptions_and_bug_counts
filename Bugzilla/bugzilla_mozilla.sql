@@ -176,7 +176,7 @@ order by RecordCount desc;
 select * from Bugzilla_Mozilla_Changesets where Hash_Id='000bf107254d873d4a1d1d0401274b97b5ce9ac8'
 select * from Bugzilla_Mozilla_Changeset_Files where Changeset_Hash_ID='000bf107254d873d4a1d1d0401274b97b5ce9ac8'
 
-select count(*) from Bugzilla_Mozilla_Changeset_Files order by Changeset_Hash_ID;
+select count(*) from Bugzilla_Mozilla_Changeset_Files;
 select count(distinct changeset_hash_id) from bugzilla_mozilla_changeset_files;
 
 
