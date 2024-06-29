@@ -41,31 +41,36 @@ class ExtractFunctionFromFileContentHelper:
         content = re.sub(single_line_comment_pattern, '', content)
         
         return content
+    
+    # https://chatgpt.com/share/4e907564-606b-4766-a1a9-05b1c709ec64
     def extract_python_functions(self, content):
         """
-        Extract all Python function names and their implementations.
+        Extract all Python functions.
         
         Parameters:
         content (str): The content of the file as a string.
         
         Returns:
-        list: A list of tuples where each tuple contains the function name and its implementation.
+        list: A list of tuples where each tuple contains the function name and entire function.
         """
         
         # Remove comments from the content
-        content = remove_python_comments(content)
+        py_content_without_comment = self.remove_python_comments(content)
         
-        # Pattern to match function definitions
-        function_pattern = re.compile(r'def\s+(\w+)\s*\(.*?\):\s*(.*?)\n(?=def|\Z)', re.DOTALL)
+        # Regular expression to match lines starting with optional spaces followed by "def"
+        pattern = re.compile(r'^(\s*def .*)$', re.MULTILINE)
+
+        # Find all matches for lines starting with "def"
+        matches = list(pattern.finditer(py_content_without_comment))
+
+        # Get the start and end positions of each match
+        positions = [match.start() for match in matches]
+        positions.append(len(py_content_without_comment))  # Add the end position of the last block
+
+        # Split the content into sections based on the positions
+        content_blocks = [py_content_without_comment[positions[i]:positions[i+1]] for i in range(len(positions)-1)]
         
-        # Find all function definitions and implementations
-        matches = function_pattern.findall(content)
-        
-        # Create the list of tuples
-        list_of_py_functions = [(match[0], 'def ' + match[0] + match[1]) for match in matches]
-        
-        return list_of_py_functions
-    
+        return content_blocks
 
     ## C++ ##
 
@@ -78,6 +83,33 @@ class ExtractFunctionFromFileContentHelper:
         return list_of_cpp_functions
     
 # Testing area
-response = requests.get(f"https://hg.mozilla.org/mozilla-central/raw-file/000b7732d8f0996ab5c8e55a98514d592e9391d5/testing/web-platform/harness/wptrunner/browsers/firefox.py")
+# response = requests.get(f"https://hg.mozilla.org/mozilla-central/raw-file/000b7732d8f0996ab5c8e55a98514d592e9391d5/testing/web-platform/harness/wptrunner/browsers/firefox.py")
+full_testing_content = '''
+def functionA():
+    inside function A.
+        inside function A.
+    inside function A.
+
+statement outside of the function.
+
+def functionB(arg_1, arg_2):
+    inside function B.
+
+class A:
+    def functionC(arg_1, arg_2):
+        inside function C.
+
+def functionD(arg_1, arg_2):
+    inside function D.
+'''
+testing_content = '''
+def functionA():
+    inside function A.
+        inside function A.
+    inside function A.
+
+statement outside of the function.
+'''
+
 helper = ExtractFunctionFromFileContentHelper()
-print(helper.remove_python_comments(response.text))
+list_py_functions = helper.extract_python_functions(testing_content)
