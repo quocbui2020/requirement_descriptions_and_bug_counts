@@ -42,7 +42,6 @@ class ExtractFunctionFromFileContentHelper:
         
         return content
     
-    # https://chatgpt.com/share/4e907564-606b-4766-a1a9-05b1c709ec64
     def extract_python_functions(self, content):
         """
         Extract all Python functions.
