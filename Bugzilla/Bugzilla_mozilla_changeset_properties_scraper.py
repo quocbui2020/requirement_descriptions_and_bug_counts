@@ -240,11 +240,18 @@ def obtain_changeset_properties_rev(changeset_link):
 
     try:
         while attempt_number <= max_retries:
-            response = requests.get(request_url)
+            try:
+                response = requests.get(request_url)
+            except requests.exceptions.RequestException as e: # Handle case when the request connection failed
+                print(f"Failed request.")
+                print("Sleep for 10s and retry...", end="", flush=True)
+                time.sleep(10)
+                print(f"Wake up.\nRetrying...", end="", flush=True)
+                attempt_number += 1
+
             if response.status_code == 200:
                 break
-            # elif response.status_code == 429:   # Code 429: Reach max request limit rate
-            else:
+            else: # Handle case when request returns status code other than `200`
                 print(f"{str(response.status_code)}.")
                 print("Sleep for 10s and retry...", end="", flush=True)
                 time.sleep(10)
@@ -254,7 +261,9 @@ def obtain_changeset_properties_rev(changeset_link):
             if attempt_number == max_retries:
                 print(f"Too many failed request attempts. Request url: {request_url}. Exit program.")
                 return None
-
+        
+        
+        
         content = response.text
 
         file_changes = []
