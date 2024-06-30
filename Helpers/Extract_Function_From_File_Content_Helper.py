@@ -13,10 +13,13 @@ import argparse
 
 class ExtractFunctionFromFileContentHelper:
     # Constructor
-    def __init__ (self):
+    def __init__ (self): #`self` refers to the class object itself (every function in a class requires `self` as the 1st input parameter)
         return
     
-    ## PYTHON ## 
+    ##########################################
+    ################# PYTHON #################
+    ##########################################
+
     def remove_python_comments(self, content):
         """
         Remove all Python comments from the given content.
@@ -174,7 +177,12 @@ class ExtractFunctionFromFileContentHelper:
 
         return list_of_functions
 
-    ## C++ ##
+
+
+
+    ##########################################
+    ################## C++ ###################
+    ##########################################
 
     def remove_cpp_comments(content):
         return
@@ -184,6 +192,10 @@ class ExtractFunctionFromFileContentHelper:
 
         return list_of_cpp_functions
     
+
+
+##########################################
+##########################################
 # Testing area
 response = requests.get(f"https://hg.mozilla.org/mozilla-central/raw-file/000b7732d8f0996ab5c8e55a98514d592e9391d5/testing/web-platform/harness/wptrunner/browsers/firefox.py")
 full_testing_content = '''
@@ -205,7 +217,6 @@ class A:
 def functionD(arg_1, arg_2):
     inside function D.
 '''
-
 
 helper = ExtractFunctionFromFileContentHelper()
 response_text_without_comments = helper.remove_python_comments(response.text)
