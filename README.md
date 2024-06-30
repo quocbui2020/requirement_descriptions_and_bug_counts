@@ -1,6 +1,6 @@
 # requirement_description_to_bug_counts
 
-This repository contains research source codes to crawl open-source projects, collect data, and tperform statistical analysis.
+This repository contains research source codes to crawl and scrap open-source projects, collect data, pre-process, and perform statistical analysis.
 
 Here is a project task dashboard: https://github.com/users/quocbui2020/projects/2 
 
