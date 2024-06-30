@@ -155,15 +155,20 @@ def obtain_changeset_properties_raw_rev(changeset_link):
 
     try:
         while attempt_number <= max_retries:
-            response = requests.get(request_url)
+            try:
+                response = requests.get(request_url)
+            except requests.exceptions.RequestException as e: # Handle case when the request connection failed
+                print(f"Failed request connection.\nRetrying in 10 seconds...", end="", flush=True)
+                time.sleep(10)
+                attempt_number += 1
+                continue
+
             if response.status_code == 200:  # OK
                 break
             # elif response.status_code == 429:  # Code 429: Reach max request limit rate
             else:
-                print(f"{str(response.status_code)}.")
-                print("Sleep for 10s and retry...", end="", flush=True)
+                print(f"{str(response.status_code)}.\nRetrying in 10 seconds...", end="", flush=True)
                 time.sleep(10)
-                print(f"Wake up.\nRetrying...", end="", flush=True)
                 attempt_number += 1
             
             if attempt_number == max_retries:
@@ -243,20 +248,16 @@ def obtain_changeset_properties_rev(changeset_link):
             try:
                 response = requests.get(request_url)
             except requests.exceptions.RequestException as e: # Handle case when the request connection failed
-                print(f"Failed request connection.")
-                print("Sleep for 10s and retry...", end="", flush=True)
+                print(f"Failed request connection.\nRetrying in 10 seconds...", end="", flush=True)
                 time.sleep(10)
-                print(f"Wake up.\nRetrying...", end="", flush=True)
                 attempt_number += 1
                 continue
 
             if response.status_code == 200:
                 break
             else: # Handle case when request returns status code other than `200`
-                print(f"{str(response.status_code)}.")
-                print("Sleep for 10s and retry...", end="", flush=True)
+                print(f"{str(response.status_code)}.\nRetrying in 10 seconds...", end="", flush=True)
                 time.sleep(10)
-                print(f"Wake up.\nRetrying...", end="", flush=True)
                 attempt_number += 1
 
             if attempt_number == max_retries:
