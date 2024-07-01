@@ -120,7 +120,7 @@ ORDER BY Row_Num ASC;
 
 --------------------------------------------------
 --------------------------------------------------
-/* CRAWLING FOR CHANGESET PARENT HASHES IN EACH CHANGESET (IGNORE BACKED OUT BUGS AND BACKED OUT CHANGESETS */
+/* CRAWLING FOR ALL THE PROPERTIES/CONTENTS IN EACH CHANGESET (IGNORE BACKED OUT BUGS AND BACKED OUT CHANGESETS) */
 --------------------------------------------------
 --------------------------------------------------
 -- Blocker: (1) Wait until the crawlers finished processing Backout_Hashes. (2) going through records that [Does_Required_Human_Inspection] = 1.
@@ -161,9 +161,9 @@ SELECT Row_Num, Hash_Id, Bug_Ids, Changeset_Link, Parent_Hashes, Child_Hashes, B
 FROM Q1
 WHERE 1=1
 AND (Backed_Out_By IS NULL OR Backed_Out_By = '')
---AND Parent_Hashes IS NOT NULL -- Include records have been processed.
-AND Parent_Hashes IS NULL -- Include records have not been processed.
-AND Task_Group = 1
+AND Parent_Hashes IS NOT NULL -- Include records have been processed.
+--AND Parent_Hashes IS NULL -- Include records have not been processed.
+AND Task_Group = 4
 --AND Row_Num BETWEEN 0 AND 4000000
 ORDER BY Row_Num asc;
 
