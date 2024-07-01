@@ -399,7 +399,9 @@ def save_changeset_properties(changeset_hash_id, changeset_properties):
                 save_changeset_properties_queries += save_changeset_parent_child_hashes_query + ";"
                 params.extend([parent_hashes, child_hashes, changeset_hash_id])
 
-                # Save commit files:
+                # Save commit files in batches to optimize the resources (prevent a process to hold resource for too long).
+                # Some changeset consists of 1000+ commit files. So, for each file, run cursor.execute() to hold the resource lock is not optimal.
+                # Optimal way: Create a list of batches, and concatenate 100 queries in each batch (don't want to exceed string limit), and then, iterate through each batch to run cursor.execute().
                 for file_change in file_changes:
                     previous_file_name, updated_file_name, file_status = file_change
                     save_changeset_properties_queries += save_commit_file_query + ";"
@@ -407,7 +409,7 @@ def save_changeset_properties(changeset_hash_id, changeset_properties):
 
                     batch_count += 1
                     if batch_count == batch_size_limit:
-                        save_changeset_properties_query_batches.append((save_changeset_properties_queries, params))
+                        save_changeset_properties_query_batches.append((save_changeset_properties_queries, params)) # Add a query to the batch
                         save_changeset_properties_queries = ''
                         params = []
                         batch_count = 0
