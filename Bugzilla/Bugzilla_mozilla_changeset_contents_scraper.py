@@ -21,7 +21,7 @@ conn_str = 'DRIVER={ODBC Driver 18 for SQL Server};' \
            'TrustServerCertificate=yes;' \
            'Trusted_Connection=yes;'
 
-get_records_to_process_query = '''
+get_unprocessed_records_from_mozilla_changesets_query = '''
     WITH Q1 AS (
         SELECT ROW_NUMBER() OVER(ORDER BY Hash_Id ASC) AS Row_Num
             ,Hash_Id
@@ -43,6 +43,8 @@ get_records_to_process_query = '''
     ORDER BY Row_Num ASC
 '''
 
+get_unprocessed_records_from_bugzilla_query
+
 save_changeset_parent_child_hashes_query = '''
     UPDATE [dbo].[Bugzilla_Mozilla_Changesets]
     SET [Parent_Hashes] = ?
@@ -62,7 +64,7 @@ save_commit_file_query = '''
 '''
 
 def get_records_to_process(task_group, start_row, end_row):
-    global conn_str, get_records_to_process_query
+    global conn_str, get_unprocessed_records_from_mozilla_changesets_query
     attempt_number = 1
     max_retries = 999 # max retry for deadlock issue.
 
@@ -71,7 +73,7 @@ def get_records_to_process(task_group, start_row, end_row):
             conn = pyodbc.connect(conn_str)
             cursor = conn.cursor()
 
-            cursor.execute(get_records_to_process_query, (task_group, start_row, end_row))
+            cursor.execute(get_unprocessed_records_from_mozilla_changesets_query, (task_group, start_row, end_row))
             rows = cursor.fetchall()
             return rows
         
