@@ -180,6 +180,106 @@ select count(*) from Bugzilla_Mozilla_Changeset_Files;
 select count(distinct changeset_hash_id) from bugzilla_mozilla_changeset_files;
 
 
+
+
+
+
+--------------------------------------------------
+--------------------------------------------------
+/* Extract data from [Bugzilla].[changeset_links] column into [Bugzilla_Mozilla_Comment_Changeset_Links] table */
+--------------------------------------------------
+--------------------------------------------------
+--query to break and extract data from changeset_links column and insert into `Bugzilla_Mozilla_Comment_Changeset_Links`
+WITH ChangesetLinks AS (
+    SELECT changeset_links
+    FROM [ResearchDatasets].[dbo].[Bugzilla]
+    WHERE changeset_links LIKE '%hg.mozilla%'
+),
+ParsedLinks AS (
+    SELECT
+        changeset_links,
+        CAST(NULL AS VARCHAR(MAX)) AS hash_id,
+        CAST(NULL AS VARCHAR(MAX)) AS mercurial_type,
+        CAST(NULL AS VARCHAR(MAX)) AS full_hg_link,
+        changeset_links + '|' AS remaining_links -- Add delimiter to the end to simplify parsing
+    FROM ChangesetLinks
+    UNION ALL
+    SELECT
+        pl.changeset_links,
+        CASE
+            WHEN CHARINDEX('hg.mozilla.org/', pl.remaining_links) > 0 AND CHARINDEX('/rev/', pl.remaining_links) > CHARINDEX('hg.mozilla.org/', pl.remaining_links) + 15
+            THEN LEFT(
+                SUBSTRING(
+                    pl.remaining_links,
+                    CHARINDEX('/rev/', pl.remaining_links) + 5,
+                    LEN(pl.remaining_links)
+                ),
+                PATINDEX('%[^a-zA-Z0-9]%', SUBSTRING(
+                    pl.remaining_links,
+                    CHARINDEX('/rev/', pl.remaining_links) + 5,
+                    LEN(pl.remaining_links)
+                )) - 1
+            )
+            ELSE NULL
+        END AS hash_id,
+        CASE
+            WHEN CHARINDEX('hg.mozilla.org/', pl.remaining_links) > 0 AND CHARINDEX('/rev/', pl.remaining_links) > CHARINDEX('hg.mozilla.org/', pl.remaining_links) + 15
+            THEN SUBSTRING(
+                pl.remaining_links,
+                CHARINDEX('hg.mozilla.org/', pl.remaining_links) + 15,
+                CHARINDEX('/rev/', pl.remaining_links) - (CHARINDEX('hg.mozilla.org/', pl.remaining_links) + 15)
+            )
+            ELSE NULL
+        END AS mercurial_type,
+        CASE
+            WHEN CHARINDEX('http', pl.remaining_links) > 0 AND CHARINDEX(' |', pl.remaining_links, CHARINDEX('http', pl.remaining_links)) > CHARINDEX('http', pl.remaining_links)
+            THEN LEFT(
+                SUBSTRING(
+                    pl.remaining_links,
+                    CHARINDEX('http', pl.remaining_links),
+                    LEN(pl.remaining_links)
+                ),
+                PATINDEX('%[^a-zA-Z0-9:/._-]%', SUBSTRING(
+                    pl.remaining_links,
+                    CHARINDEX('http', pl.remaining_links),
+                    LEN(pl.remaining_links)
+                )) - 1
+            )
+            ELSE NULL
+        END AS full_hg_link,
+        CASE
+            WHEN CHARINDEX(' |', pl.remaining_links, CHARINDEX('/rev/', pl.remaining_links) + 5) > 0
+            THEN SUBSTRING(
+                pl.remaining_links,
+                CHARINDEX(' |', pl.remaining_links, CHARINDEX('/rev/', pl.remaining_links) + 5) + 2,
+                LEN(pl.remaining_links)
+            )
+            ELSE ''
+        END AS remaining_links
+    FROM ParsedLinks pl
+    WHERE CHARINDEX('/rev/', pl.remaining_links) > 0 AND CHARINDEX('hg.mozilla.org/', pl.remaining_links) > 0
+)
+INSERT INTO [dbo].[Bugzilla_Mozilla_Comment_Changeset_Links] (Hash_ID, Changeset_Links, Mercurial_Type, Full_Link)
+SELECT
+    hash_id,
+    changeset_links,
+    mercurial_type,
+    full_hg_link
+FROM ParsedLinks
+WHERE hash_id IS NOT NULL
+ORDER BY changeset_links, hash_id
+OPTION (MAXRECURSION 0);
+
+
+with q1 as (
+SELECT Hash_ID, COUNT(hash_id) as [count]
+FROM [dbo].[Bugzilla_Mozilla_Comment_Changeset_Links]
+group by Hash_ID
+)
+select * from q1
+where [count] > 1
+order by [count] desc
+
 ----------------------------------------------------------------------------------------------
 ----------------------------------------------------------------------------------------------
 /* WORKING AREA */
