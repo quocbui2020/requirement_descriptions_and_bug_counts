@@ -21,6 +21,7 @@ conn_str = 'DRIVER={ODBC Driver 18 for SQL Server};' \
            'TrustServerCertificate=yes;' \
            'Trusted_Connection=yes;'
 
+# get_unprocessed_records_from_mozilla_changesets_query: Get unprocessed changesets mined from the ShortLog
 get_unprocessed_records_from_mozilla_changesets_query = '''
     WITH Q1 AS (
         SELECT ROW_NUMBER() OVER(ORDER BY Hash_Id ASC) AS Row_Num
@@ -43,7 +44,46 @@ get_unprocessed_records_from_mozilla_changesets_query = '''
     ORDER BY Row_Num ASC
 '''
 
-get_unprocessed_records_from_bugzilla_query
+# Required input args: Task group, start row number, end row number
+get_unprocessed_comment_changesets_query = '''
+    WITH Q1 AS (
+        SELECT ROW_NUMBER() OVER(ORDER BY Hash_ID ASC) AS Row_Num
+            ,Hash_ID
+            ,Mercurial_Type
+            ,Full_Link
+            ,Task_Group
+            ,Is_Processed
+            ,Changeset_Links
+            ,LOWER(SUBSTRING(Hash_Id, 1, 6)) as Short_Hash_Id
+        FROM Bugzilla_Mozilla_Comment_Changeset_Links
+        WHERE Task_Group = ?
+    )
+    , Q2 AS (
+        SELECT LOWER(SUBSTRING(bmc.Hash_Id, 1, 6)) as Short_Hash_Id
+            ,Is_Backed_Out_Changeset, Mercurial_Type
+            ,Backed_Out_By
+            ,Bug_Ids
+            ,Parent_Hashes
+        FROM Bugzilla_Mozilla_Changesets bmc
+    )
+    SELECT Q1.Row_Num
+        ,Q1.Hash_ID AS Q1_Hash_ID
+        ,Q1.Mercurial_Type AS Q1_Mercurial_Type
+        ,Q1.Full_Link AS Q1_Full_Link
+        ,Q2.Mercurial_Type AS Q2_Mercurial_Type
+        ,Q2.Is_Backed_Out_Changeset AS Q2_Is_Backed_Out_Changeset
+        ,Q2.Backed_Out_By AS Q2_Backed_Out_By
+        ,Q2.Bug_Ids AS Q2_Bug_Ids
+        ,Q2.Parent_Hashes AS Q2_Parent_Hashes
+        ,Bugzilla.id AS Bugzilla_ID
+        ,Bugzilla.resolution AS Bugzilla_Resolution
+    FROM Q1
+    LEFT JOIN Q2 ON Q2.Short_Hash_Id = Q1.Short_Hash_Id
+    LEFT JOIN Bugzilla ON Bugzilla.changeset_links = Q1.Changeset_Links
+    WHERE Q1.Is_Processed = 0
+        AND Q1.Row_Num BETWEEN ? AND ?
+    ORDER BY Q1.Row_Num ASC, Q1_Hash_ID ASC;
+'''
 
 save_changeset_parent_child_hashes_query = '''
     UPDATE [dbo].[Bugzilla_Mozilla_Changesets]
@@ -61,6 +101,19 @@ save_commit_file_query = '''
     WHEN NOT MATCHED THEN
         INSERT ([Changeset_Hash_ID], [Previous_File_Name], [Updated_File_Name], [File_Status], [Inserted_On])
         VALUES (source.Changeset_Hash_ID, source.Previous_File_Name, source.Updated_File_Name, ?, SYSUTCDATETIME())
+'''
+
+should_not_process_query = '''
+    SELECT TOP 1 1
+    FROM Bugzilla_Mozilla_Changeset_Files
+    WHERE Changeset_Hash_ID LIKE ?
+
+    UNION
+
+    SELECT TOP 1 1
+    FROM Bugzilla_Mozilla_Changesets
+    WHERE Hash_Id LIKE ?
+        AND (Is_Backed_Out_Changeset = 1 OR Backed_Out_By IS NOT NULL)
 '''
 
 def get_records_to_process(task_group, start_row, end_row):
@@ -238,10 +291,8 @@ def obtain_changeset_properties_raw_rev(changeset_link):
         traceback.print_exc()
         exit()
 
-# obtain_changeset_properties_raw_rev: scrapping the changeset properties from the rev version:
-def obtain_changeset_properties_rev(changeset_link):
-    base_url = f"https://hg.mozilla.org"
-    request_url = base_url + str(changeset_link)
+# obtain_changeset_properties_rev: scrapping the changeset properties from the rev version: (backed_out_by, changeset_datetime, parent_hashes, child_hashes, file_changes)
+def obtain_changeset_properties_rev(request_url):
     attempt_number = 1
     max_retries = 20
 
@@ -460,6 +511,200 @@ def save_changeset_properties(changeset_hash_id, changeset_properties):
         print("\nFailed after maximum retry attempts due to deadlock.")
         exit()
 
+def get_unprocessed_comment_changeset_records(task_group, start_row, end_row):
+    global conn_str, get_unprocessed_comment_changesets_query
+    attempt_number = 1
+    max_retries = 999 # max retry for deadlock issue.
+
+    while attempt_number <= max_retries:
+        try:
+            conn = pyodbc.connect(conn_str)
+            cursor = conn.cursor()
+
+            cursor.execute(get_unprocessed_comment_changesets_query, (task_group, start_row, end_row))
+            rows = cursor.fetchall()
+            return rows
+        
+        except pyodbc.Error as e:
+            error_code = e.args[0]
+            if error_code in ['40001', '40P01']:  # Deadlock error codes
+                attempt_number += 1
+                time.sleep(5)
+                if attempt_number < max_retries:
+                    continue
+            print(f"Error - get_unprocessed_comment_changeset_records({task_group}, {start_row}, {end_row}): {e}.")
+            exit()
+
+        except Exception as e:
+            # Handle any exceptions
+            print(f"Error - get_unprocessed_comment_changeset_records({task_group}, {start_row}, {end_row}): {e}.")
+            traceback.print_exc()
+            exit()
+
+        finally:
+            # Close the cursor and connection if they are not None
+            if cursor:
+                cursor.close()
+            if conn:
+                conn.close()
+    else:
+        print("\nFailed after maximum retry attempts due to deadlock.")
+        exit()
+
+def should_process(hash_id):
+    global should_not_process_query, conn_str
+
+    attempt_number = 1
+    max_retries = 999 # max retry for deadlock issue.
+
+    while attempt_number <= max_retries:
+        try:
+            conn = pyodbc.connect(conn_str)
+            cursor = conn.cursor()
+
+            cursor.execute(should_not_process_query, (f"{hash_id}%"))
+            queryResult = cursor.fetchone()
+
+            if not queryResult or queryResult[0] == None:
+                return True
+            return False
+        
+        except pyodbc.Error as e:
+            error_code = e.args[0]
+            if error_code in ['40001', '40P01']:  # Deadlock error codes
+                attempt_number += 1
+                time.sleep(5)
+                if attempt_number < max_retries:
+                    continue
+            print(f"Error - should_process({hash_id}): {e}.")
+            exit()
+
+        except Exception as e:
+            # Handle any exceptions
+            print(f"Error - should_process({hash_id}): {e}.")
+            traceback.print_exc()
+            exit()
+
+        finally:
+            # Close the cursor and connection if they are not None
+            if cursor:
+                cursor.close()
+            if conn:
+                conn.close()
+    else:
+        print("\nFailed after maximum retry attempts due to deadlock.")
+        exit()
+
+# save_comment_changeset_properties: this function saves all the properties of the comment changeset after finished processed:
+# Save the `Bugzilla_Mozilla_Changesets.mercurial_type`, `Bugzilla_Mozilla_Changesets.Is_Processed`, `Bugzilla_Mozilla_Changesets.Bug_Ids` if it is empty (From Bugzilla table)
+def save_comment_changeset_properties():
+    global should_not_process_query, conn_str
+
+    attempt_number = 1
+    max_retries = 999 # max retry for deadlock issue.
+
+    while attempt_number <= max_retries:
+        try:
+            conn = pyodbc.connect(conn_str)
+            cursor = conn.cursor()
+
+            cursor.execute('''UPDATE FROM ''', (f"{hash_id}%"))
+            queryResult = cursor.fetchone()
+
+            if not queryResult or queryResult[0] == None:
+                return True
+            return False
+        
+        except pyodbc.Error as e:
+            error_code = e.args[0]
+            if error_code in ['40001', '40P01']:  # Deadlock error codes
+                attempt_number += 1
+                time.sleep(5)
+                if attempt_number < max_retries:
+                    continue
+            print(f"Error - should_process({hash_id}): {e}.")
+            exit()
+
+        except Exception as e:
+            # Handle any exceptions
+            print(f"Error - should_process({hash_id}): {e}.")
+            traceback.print_exc()
+            exit()
+
+        finally:
+            # Close the cursor and connection if they are not None
+            if cursor:
+                cursor.close()
+            if conn:
+                conn.close()
+    else:
+        print("\nFailed after maximum retry attempts due to deadlock.")
+        exit()
+
+def start_scraper(parser_args, scraper_type):
+    task_group = parser_args.arg_1
+    start_row = parser_args.arg_2
+    end_row = parser_args.arg_3
+
+    match scraper_type:
+        # Process changesets found in the ShortLog (Onyl Mozilla-Central at the moment)
+        case 'Changesets_From_ShortLog':
+            list_of_records = get_records_to_process(task_group, start_row, end_row)
+            record_count = len(list_of_records)
+
+            for record in list_of_records:
+                Row_Num, changeset_hash_Id, Bug_Ids, Changeset_Link, Parent_Hashes = record
+
+                print(f"[{strftime('%m/%d/%Y %H:%M:%S', localtime())}] Remainings: {str(record_count)}. Scraping properties of {changeset_hash_Id}...", end="", flush=True)
+
+                # Iterate through 'Bug_Ids' and check if any of them are 'resolved' bugs. If not, no need to process further
+                list_of_bug_id = Bug_Ids.split(" | ")
+                is_skipped = True
+                for bug_id in list_of_bug_id:
+                    #is_resolved = is_resolved_bug(bug_id)
+                    is_resolved = True
+                    # If at least one of the bug in the changeset is 'resolved', then we will process this changeset
+                    if is_resolved == True:
+                        is_skipped = False
+                        break
+
+                if is_skipped == True:
+                    print("Skipped - Bugs Not 'Resolved'")
+                    continue
+
+                changeset_properties = obtain_changeset_properties_rev(f"https://hg.mozilla.org{str(Changeset_Link)}")
+
+                # Save to database:
+                complete_status = save_changeset_properties(changeset_hash_Id, changeset_properties)
+
+                print(f"{complete_status}") # either 'Done' or 'Backed Out'
+                record_count -= 1
+
+        # Process changesets found in every comments per bug:
+        case 'Changesets_From_Comments':
+            records = get_unprocessed_comment_changeset_records(task_group, start_row, end_row)
+            record_count = len(records)
+            
+            for i in range(record_count):
+                Row_Num, Q1_Hash_ID, Q1_Mercurial_Type, Q1_Full_Link, Q2_Mercurial_Type, Q2_Is_Backed_Out_Changeset, Q2_Backed_Out_By, Q2_Bug_Ids, Q2_Parent_Hashes, Bugzilla_ID, Bugzilla_Resolution = records[i]
+
+                print(f"[{strftime('%m/%d/%Y %H:%M:%S', localtime())}] Remainings: {str(record_count)}. Scraping properties of {changeset_hash_Id}...", end="", flush=True)
+
+                # Check if current hash id is same as previous: quoc continue
+                prev_row_num = records[i-1][0]
+                prev_q1_hash_id = records[i-1][1]
+                if prev_hash_id != None and prev_hash_id[0:5].upper() == Hash_ID[0:5].upper():
+                    # Update the `Bugzilla_Mozilla_Changesets.mercurial_type`, `Bugzilla_Mozilla_Changesets.Is_Processed`, `Bugzilla_Mozilla_Changesets.Bug_Ids` if it is empty (From Bugzilla table) 
+
+                    None
+
+                # Check to see if we should process this changeset or not:
+                should_process = should_process(Hash_ID)
+                if should_process == False:
+                    continue
+                
+                changeset_properties = obtain_changeset_properties_rev(Full_Link)
+
 
 ##################################################################################################### 
 
@@ -468,47 +713,8 @@ if __name__ == "__main__":
     parser.add_argument('arg_1', type=int, help='Argument 1')
     parser.add_argument('arg_2', type=int, help='Argument 2')
     parser.add_argument('arg_3', type=int, help='Argument 3')
-    args = parser.parse_args()
-    task_group = args.arg_1
-    start_row = args.arg_2
-    end_row = args.arg_3
-
-    list_of_records = get_records_to_process(task_group, start_row, end_row)
-    # list_of_records = get_records_to_process(1, 34124, 45454) # Test
-
-    # Test records
-    # list_of_records = []
-    # list_of_records.append(('4400', '0f16abb82c08d5033af4caea5f21a48fb5c267b2', '840877', '/mozilla-central/rev/0f16abb82c08d5033af4caea5f21a48fb5c267b2', None)) # Test case for deleted, new, renamed, copied file names
-    # list_of_records.append(('4401', '0178681fab81bb70450098ee50f04ff9c34fc02b', '840878', '/mozilla-central/rev/0178681fab81bb70450098ee50f04ff9c34fc02b', None)) # Test case for 'backed out by' changeset
+    parser_args = parser.parse_args()
     
-    record_count = len(list_of_records)
-
-    for record in list_of_records:
-        Row_Num, changeset_hash_Id, Bug_Ids, Changeset_Link, Parent_Hashes = record
-
-        print(f"[{strftime('%m/%d/%Y %H:%M:%S', localtime())}] Remainings: {str(record_count)}. Scraping properties of {changeset_hash_Id}...", end="", flush=True)
-
-        # Iterate through 'Bug_Ids' and check if any of them are 'resolved' bugs. If not, no need to process further
-        list_of_bug_id = Bug_Ids.split(" | ")
-        is_skipped = True
-        for bug_id in list_of_bug_id:
-            #is_resolved = is_resolved_bug(bug_id)
-            is_resolved = True
-            # If at least one of the bug in the changeset is 'resolved', then we will process this changeset
-            if is_resolved == True:
-                is_skipped = False
-                break
-
-        if is_skipped == True:
-            print("Skipped - Bugs Not 'Resolved'")
-            continue
-
-        changeset_properties = obtain_changeset_properties_rev(Changeset_Link)
-
-        # Save to database:
-        complete_status = save_changeset_properties(changeset_hash_Id, changeset_properties)
-
-        print(f"{complete_status}") # either 'Done' or 'Backed Out'
-        record_count -= 1
+    start_scraper(parser_args, 'Changeset_Records_From_Comments')
 
 print(f"[{strftime('%m/%d/%Y %H:%M:%S', localtime())}] PROGRAM FINISHED. EXIT!")

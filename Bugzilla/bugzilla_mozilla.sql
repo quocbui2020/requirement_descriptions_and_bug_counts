@@ -163,24 +163,16 @@ WHERE 1=1
 AND (Backed_Out_By IS NULL OR Backed_Out_By = '')
 AND Parent_Hashes IS NOT NULL -- Include records have been processed.
 --AND Parent_Hashes IS NULL -- Include records have not been processed.
-AND Task_Group = 4
+--AND Task_Group = 4
 --AND Row_Num BETWEEN 0 AND 4000000
 ORDER BY Row_Num asc;
+
 
 -- Get top 2 changeset that have the most count of file changes:
 SELECT top 2 Changeset_Hash_ID, COUNT(*) AS RecordCount
 FROM Bugzilla_Mozilla_Changeset_Files
 GROUP BY Changeset_Hash_ID
 order by RecordCount desc;
-
-select * from Bugzilla_Mozilla_Changesets where Hash_Id='000bf107254d873d4a1d1d0401274b97b5ce9ac8'
-select * from Bugzilla_Mozilla_Changeset_Files where Changeset_Hash_ID='000bf107254d873d4a1d1d0401274b97b5ce9ac8'
-
-select count(*) from Bugzilla_Mozilla_Changeset_Files;
-select count(distinct changeset_hash_id) from bugzilla_mozilla_changeset_files;
-
-
-
 
 
 
@@ -270,7 +262,7 @@ WHERE hash_id IS NOT NULL
 ORDER BY changeset_links, hash_id
 OPTION (MAXRECURSION 0);
 
-
+-- Query to get the count of records that have similar Hash_ID with count > 1
 with q1 as (
 SELECT Hash_ID, COUNT(hash_id) as [count]
 FROM [dbo].[Bugzilla_Mozilla_Comment_Changeset_Links]
@@ -279,6 +271,93 @@ group by Hash_ID
 select * from q1
 where [count] > 1
 order by [count] desc
+
+--Query to determine what lengths do hash ids have and the total count of each character length:
+--Useful note: shortest hash id is 6 characters.
+SELECT len(hash_id) as hash_id_length, count(hash_id) as total_count
+FROM [Bugzilla_Mozilla_Comment_Changeset_Links] bmccl
+group by len(hash_id)
+order by hash_id_length desc;
+
+
+
+
+
+
+
+------------------------------------------------------------------------------
+------------------------------------------------------------------------------
+/* 
+Extract contents from the changesets that were found in comments. 
+Process records from [Bugzilla_Mozilla_Comment_Changeset_Links]
+*/
+------------------------------------------------------------------------------
+------------------------------------------------------------------------------
+/*
+Note to consider:
+	- Shortest hash id has 6 characters.
+	- The hash id could be an actual hash id or it is changeset number. Need to handle both cases.
+	- When the changeset has mercurial_type ='mozilla-central', compare this changeset with the
+		[Bugzilla_Mozilla_Changeset_Files].[Changeset_Hash_ID] by hash_id. If matched, check if its
+		Parent_Hashes is null or not, if it does, do not process. If not yet, then process it, as well as
+		update the hash id to full hash id (not parent changeset number or partial hash) and make sure to
+		update the Bug_ids as well if the changeset doesn't have the bug_id already or add new bug id if not found.
+	- A changeset could have multiple `Mercurial_Type`, therefore, we also need to compare this changeset to `Bugzilla_Mozilla_Changesets` table to update the Mercurial_Typet.
+	- How do we know if the changesets found in the comments associated with the actual bug id that it in?
+		- For now, I think the best way is to: If bug ids are in the title of changesets, then consider only does bug ids. If no bug ids in the title, then assume that the changesets found in the bug's comments. are associated to this bug.
+*/
+-- Query to get the comment changesets to process:
+WITH Q1 AS (
+	-- could have multiple records with have hash id but different Mercurial type.
+    SELECT ROW_NUMBER() OVER(ORDER BY Hash_ID ASC) AS Row_Num
+        ,Hash_ID -- Could be hash id or changeset number.
+        ,Mercurial_Type
+        ,Full_Link
+        ,Task_Group
+        ,Is_Processed
+		,Changeset_Links
+		,LOWER(SUBSTRING(Hash_Id, 1, 6)) as Short_Hash_Id
+    FROM Bugzilla_Mozilla_Comment_Changeset_Links
+    WHERE Task_Group = 1
+)
+, Q2 AS (
+	SELECT LOWER(SUBSTRING(bmc.Hash_Id, 1, 6)) as Short_Hash_Id
+		,Is_Backed_Out_Changeset, Mercurial_Type
+		,Backed_Out_By
+		,Bug_Ids
+		,Parent_Hashes
+	FROM Bugzilla_Mozilla_Changesets bmc
+)
+SELECT Q1.Row_Num
+	,Q1.Hash_ID AS Q1_Hash_ID
+	,Q1.Mercurial_Type AS Q1_Mercurial_Type
+	,Q1.Full_Link AS Q1_Full_Link
+	,Q2.Mercurial_Type AS Q2_Mercurial_Type
+	,Q2.Is_Backed_Out_Changeset AS Q2_Is_Backed_Out_Changeset
+	,Q2.Backed_Out_By AS Q2_Backed_Out_By
+	,Q2.Bug_Ids AS Q2_Bug_Ids -- Bud ids in changeset title (More realiable)
+	,Q2.Parent_Hashes AS Q2_Parent_Hashes -- If Parent_Hashes is not null, then we know that it has been processed
+	,Bugzilla.id AS Bugzilla_ID -- Bug id where the changeset comment located (Not as realiable since comments are written in not-no-systematic way).
+	,Bugzilla.resolution AS Bugzilla_Resolution -- `resolution` should always be 'FIXED' since we only consider resolved bug when crawling for comment changeset links.
+FROM Q1
+LEFT JOIN Q2 ON Q2.Short_Hash_Id = Q1.Short_Hash_Id
+LEFT JOIN Bugzilla ON Bugzilla.changeset_links = Q1.Changeset_Links
+WHERE Q1.Is_Processed = 0
+    AND Q1.Row_Num BETWEEN 0 AND 100000
+	--AND Q1.Row_Num = '87474' -- Example of a changeset that in the comment of multiple bug ids.
+ORDER BY Q1.Row_Num ASC, Q1_Hash_ID ASC;
+
+
+
+-- Query to determine if the changeset should be processed or not:
+SELECT TOP 1 1
+FROM Bugzilla_Mozilla_Changeset_Files
+WHERE Changeset_Hash_ID LIKE ''
+UNION
+SELECT TOP 1 1
+FROM Bugzilla_Mozilla_Changesets
+WHERE Hash_Id LIKE ''
+    AND (Is_Backed_Out_Changeset = 1 OR Backed_Out_By IS NOT NULL)
 
 ----------------------------------------------------------------------------------------------
 ----------------------------------------------------------------------------------------------
@@ -294,7 +373,6 @@ ORDER BY inserted_on DESC;
 select hash_id, changeset_summary, Backout_Hashes from Bugzilla_Mozilla_Changesets where bug_ids = '' and changeset_summary like '%back%out%';
 
 -- TODO: Handle cases when the filename is renamed (compare with the same filename at the 'tip' changeset, if different, backtracking until we find the match fileName.
-
 
 -- Testing records:
 select * from Bugzilla_Mozilla_Changesets where Hash_Id='26cce0d3e1030a3ede35b55e257dcf1e36539153' -- Test case for deleted, new, renamed, copied file names
