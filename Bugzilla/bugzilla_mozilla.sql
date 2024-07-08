@@ -263,21 +263,25 @@ ORDER BY changeset_links, hash_id
 OPTION (MAXRECURSION 0);
 
 -- Query to get the count of records that have similar Hash_ID with count > 1
-with q1 as (
-SELECT Hash_ID, COUNT(hash_id) as [count]
-FROM [dbo].[Bugzilla_Mozilla_Comment_Changeset_Links]
-group by Hash_ID
-)
-select * from q1
-where [count] > 1
-order by [count] desc
+WITH q1
+AS (
+	SELECT Hash_ID
+		,COUNT(hash_id) AS [count]
+	FROM [dbo].[Bugzilla_Mozilla_Comment_Changeset_Links]
+	GROUP BY Hash_ID
+	)
+SELECT *
+FROM q1
+WHERE [count] > 1
+ORDER BY [count] DESC
 
 --Query to determine what lengths do hash ids have and the total count of each character length:
 --Useful note: shortest hash id is 6 characters.
-SELECT len(hash_id) as hash_id_length, count(hash_id) as total_count
+SELECT LEN(hash_id) AS hash_id_length
+	,COUNT(hash_id) AS total_count
 FROM [Bugzilla_Mozilla_Comment_Changeset_Links] bmccl
-group by len(hash_id)
-order by hash_id_length desc;
+GROUP BY LEN(hash_id)
+ORDER BY hash_id_length DESC;
 
 
 
@@ -306,32 +310,35 @@ Note to consider:
 	- How do we know if the changesets found in the comments associated with the actual bug id that it in?
 		- For now, I think the best way is to: If bug ids are in the title of changesets, then consider only does bug ids. If no bug ids in the title, then assume that the changesets found in the bug's comments. are associated to this bug.
 */
--- Query to get the comment changesets to process:
+-- Query to save comment changeset records and relevant info to process into temporary table.
+--Since query takes too long to execute, create a temporary table `Temp_Comment_Changesets_For_Process` to store the result of these query.
 WITH Q1 AS (
 	-- could have multiple records with have hash id but different Mercurial type.
     SELECT ROW_NUMBER() OVER(ORDER BY Hash_ID ASC) AS Row_Num
-        ,Hash_ID -- Could be hash id or changeset number.
+        ,Hash_Id -- Could be `hash id` or `changeset number` (40 characters or less).
         ,Mercurial_Type
         ,Full_Link
         ,Task_Group
         ,Is_Processed
 		,Changeset_Links
-		,LOWER(SUBSTRING(Hash_Id, 1, 6)) as Short_Hash_Id
     FROM Bugzilla_Mozilla_Comment_Changeset_Links
     WHERE Task_Group = 1
 )
 , Q2 AS (
-	SELECT LOWER(SUBSTRING(bmc.Hash_Id, 1, 6)) as Short_Hash_Id
+	SELECT Hash_Id -- Hash id is always 40 characters.
 		,Is_Backed_Out_Changeset, Mercurial_Type
 		,Backed_Out_By
 		,Bug_Ids
 		,Parent_Hashes
 	FROM Bugzilla_Mozilla_Changesets bmc
 )
+--INSERT INTO Temp_Comment_Changesets_For_Process
 SELECT Q1.Row_Num
+	,Q1.Task_Group
 	,Q1.Hash_ID AS Q1_Hash_ID
 	,Q1.Mercurial_Type AS Q1_Mercurial_Type
 	,Q1.Full_Link AS Q1_Full_Link
+	,Q2.Hash_Id AS Q2_Hash_Id
 	,Q2.Mercurial_Type AS Q2_Mercurial_Type
 	,Q2.Is_Backed_Out_Changeset AS Q2_Is_Backed_Out_Changeset
 	,Q2.Backed_Out_By AS Q2_Backed_Out_By
@@ -340,24 +347,39 @@ SELECT Q1.Row_Num
 	,Bugzilla.id AS Bugzilla_ID -- Bug id where the changeset comment located (Not as realiable since comments are written in not-no-systematic way).
 	,Bugzilla.resolution AS Bugzilla_Resolution -- `resolution` should always be 'FIXED' since we only consider resolved bug when crawling for comment changeset links.
 FROM Q1
-LEFT JOIN Q2 ON Q2.Short_Hash_Id = Q1.Short_Hash_Id
+LEFT JOIN Q2 ON LEFT(Q2.Hash_Id, LEN(Q1.Hash_Id)) = Q1.Hash_Id -- Join 2 tables using wildcard operation (Not good, take too much time)
 LEFT JOIN Bugzilla ON Bugzilla.changeset_links = Q1.Changeset_Links
 WHERE Q1.Is_Processed = 0
-    AND Q1.Row_Num BETWEEN 0 AND 100000
-	--AND Q1.Row_Num = '87474' -- Example of a changeset that in the comment of multiple bug ids.
+    --AND Q1.Row_Num BETWEEN 0 AND 10
+	AND Q1.Row_Num = '87474' -- Example of a changeset that in the comment of multiple bug ids.
 ORDER BY Q1.Row_Num ASC, Q1_Hash_ID ASC;
 
+-- quoc continue
+-- Get records to process:
+SELECT *
+FROM [Temp_Comment_Changesets_For_Process]
+WHERE Is_Processed = 0
+    --AND Row_Num BETWEEN 0 AND 10
+	AND Row_Num = '87474' -- Example of a changeset that in the comment of multiple bug ids.
+ORDER BY Row_Num ASC, Q1_Hash_ID ASC;
 
 
--- Query to determine if the changeset should be processed or not:
-SELECT TOP 1 1
-FROM Bugzilla_Mozilla_Changeset_Files
-WHERE Changeset_Hash_ID LIKE ''
-UNION
-SELECT TOP 1 1
-FROM Bugzilla_Mozilla_Changesets
-WHERE Hash_Id LIKE ''
-    AND (Is_Backed_Out_Changeset = 1 OR Backed_Out_By IS NOT NULL)
+--multiple records with same row_num:
+select Row_Num, count(Row_Num) as total
+from Temp_Comment_Changesets_For_Process
+group by Row_Num
+order by total desc;
+
+--multiple records with same hash_id:
+--How? Multiple Bugzilla_IDs; multiple Row_Num
+select Q1_Hash_ID, count(Q1_Hash_ID) as total
+from Temp_Comment_Changesets_For_Process
+group by Q1_Hash_ID
+order by total desc;
+
+
+
+
 
 ----------------------------------------------------------------------------------------------
 ----------------------------------------------------------------------------------------------

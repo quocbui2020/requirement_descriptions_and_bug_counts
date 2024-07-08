@@ -1,15 +1,15 @@
-import requests
-from datetime import datetime
-#from prettytable import PrettyTable
-from bs4 import BeautifulSoup
-import logging
-from logging import info
-from time import strftime, localtime
-import pyodbc
 import traceback
-import re
 import time
+import requests
+import re
+import pyodbc
+import logging
 import argparse
+from time import strftime, localtime
+from logging import info
+from datetime import datetime
+from collections import namedtuple
+from bs4 import BeautifulSoup
 
 # Connection string
 conn_str = 'DRIVER={ODBC Driver 18 for SQL Server};' \
@@ -46,43 +46,25 @@ get_unprocessed_records_from_mozilla_changesets_query = '''
 
 # Required input args: Task group, start row number, end row number
 get_unprocessed_comment_changesets_query = '''
-    WITH Q1 AS (
-        SELECT ROW_NUMBER() OVER(ORDER BY Hash_ID ASC) AS Row_Num
-            ,Hash_ID
-            ,Mercurial_Type
-            ,Full_Link
-            ,Task_Group
-            ,Is_Processed
-            ,Changeset_Links
-            ,LOWER(SUBSTRING(Hash_Id, 1, 6)) as Short_Hash_Id
-        FROM Bugzilla_Mozilla_Comment_Changeset_Links
-        WHERE Task_Group = ?
-    )
-    , Q2 AS (
-        SELECT LOWER(SUBSTRING(bmc.Hash_Id, 1, 6)) as Short_Hash_Id
-            ,Is_Backed_Out_Changeset, Mercurial_Type
-            ,Backed_Out_By
-            ,Bug_Ids
-            ,Parent_Hashes
-        FROM Bugzilla_Mozilla_Changesets bmc
-    )
-    SELECT Q1.Row_Num
-        ,Q1.Hash_ID AS Q1_Hash_ID
-        ,Q1.Mercurial_Type AS Q1_Mercurial_Type
-        ,Q1.Full_Link AS Q1_Full_Link
-        ,Q2.Mercurial_Type AS Q2_Mercurial_Type
-        ,Q2.Is_Backed_Out_Changeset AS Q2_Is_Backed_Out_Changeset
-        ,Q2.Backed_Out_By AS Q2_Backed_Out_By
-        ,Q2.Bug_Ids AS Q2_Bug_Ids
-        ,Q2.Parent_Hashes AS Q2_Parent_Hashes
-        ,Bugzilla.id AS Bugzilla_ID
-        ,Bugzilla.resolution AS Bugzilla_Resolution
-    FROM Q1
-    LEFT JOIN Q2 ON Q2.Short_Hash_Id = Q1.Short_Hash_Id
-    LEFT JOIN Bugzilla ON Bugzilla.changeset_links = Q1.Changeset_Links
-    WHERE Q1.Is_Processed = 0
-        AND Q1.Row_Num BETWEEN ? AND ?
-    ORDER BY Q1.Row_Num ASC, Q1_Hash_ID ASC;
+    SELECT [Row_Num]
+        ,[Task_Group]
+        ,[Q1_Hash_ID]
+        ,[Q1_Mercurial_Type]
+        ,[Q1_Full_Link]
+        ,[Q2_Hash_Id]
+        ,[Q2_Mercurial_Type]
+        ,[Q2_Is_Backed_Out_Changeset]
+        ,[Q2_Backed_Out_By]
+        ,[Q2_Bug_Ids]
+        ,[Q2_Parent_Hashes]
+        ,[Bugzilla_ID]
+        ,[Bugzilla_Resolution]
+        ,[Is_Processed]
+    FROM [Temp_Comment_Changesets_For_Process]
+    WHERE Is_Processed = 0
+    AND Task_Group = ?
+    AND Row_Num BETWEEN ? AND ?
+    ORDER BY Row_Num ASC, Q1_Hash_ID ASC;
 '''
 
 save_changeset_parent_child_hashes_query = '''
@@ -101,19 +83,6 @@ save_commit_file_query = '''
     WHEN NOT MATCHED THEN
         INSERT ([Changeset_Hash_ID], [Previous_File_Name], [Updated_File_Name], [File_Status], [Inserted_On])
         VALUES (source.Changeset_Hash_ID, source.Previous_File_Name, source.Updated_File_Name, ?, SYSUTCDATETIME())
-'''
-
-should_not_process_query = '''
-    SELECT TOP 1 1
-    FROM Bugzilla_Mozilla_Changeset_Files
-    WHERE Changeset_Hash_ID LIKE ?
-
-    UNION
-
-    SELECT TOP 1 1
-    FROM Bugzilla_Mozilla_Changesets
-    WHERE Hash_Id LIKE ?
-        AND (Is_Backed_Out_Changeset = 1 OR Backed_Out_By IS NOT NULL)
 '''
 
 def get_records_to_process(task_group, start_row, end_row):
@@ -294,7 +263,7 @@ def obtain_changeset_properties_raw_rev(changeset_link):
 # obtain_changeset_properties_rev: scrapping the changeset properties from the rev version: (backed_out_by, changeset_datetime, parent_hashes, child_hashes, file_changes)
 def obtain_changeset_properties_rev(request_url):
     attempt_number = 1
-    max_retries = 20
+    max_retries = 20 # if we attempt to make web request 20 times, I think it's safe to stop re-trying.
 
     try:
         while attempt_number <= max_retries:
@@ -316,8 +285,6 @@ def obtain_changeset_properties_rev(request_url):
             if attempt_number == max_retries:
                 print(f"Too many failed request attempts. Request url: {request_url}. Exit program.")
                 return None
-        
-        
         
         content = response.text
 
@@ -551,49 +518,6 @@ def get_unprocessed_comment_changeset_records(task_group, start_row, end_row):
         print("\nFailed after maximum retry attempts due to deadlock.")
         exit()
 
-def should_process(hash_id):
-    global should_not_process_query, conn_str
-
-    attempt_number = 1
-    max_retries = 999 # max retry for deadlock issue.
-
-    while attempt_number <= max_retries:
-        try:
-            conn = pyodbc.connect(conn_str)
-            cursor = conn.cursor()
-
-            cursor.execute(should_not_process_query, (f"{hash_id}%"))
-            queryResult = cursor.fetchone()
-
-            if not queryResult or queryResult[0] == None:
-                return True
-            return False
-        
-        except pyodbc.Error as e:
-            error_code = e.args[0]
-            if error_code in ['40001', '40P01']:  # Deadlock error codes
-                attempt_number += 1
-                time.sleep(5)
-                if attempt_number < max_retries:
-                    continue
-            print(f"Error - should_process({hash_id}): {e}.")
-            exit()
-
-        except Exception as e:
-            # Handle any exceptions
-            print(f"Error - should_process({hash_id}): {e}.")
-            traceback.print_exc()
-            exit()
-
-        finally:
-            # Close the cursor and connection if they are not None
-            if cursor:
-                cursor.close()
-            if conn:
-                conn.close()
-    else:
-        print("\nFailed after maximum retry attempts due to deadlock.")
-        exit()
 
 # save_comment_changeset_properties: this function saves all the properties of the comment changeset after finished processed:
 # Save the `Bugzilla_Mozilla_Changesets.mercurial_type`, `Bugzilla_Mozilla_Changesets.Is_Processed`, `Bugzilla_Mozilla_Changesets.Bug_Ids` if it is empty (From Bugzilla table)
@@ -682,29 +606,61 @@ def start_scraper(parser_args, scraper_type):
 
         # Process changesets found in every comments per bug:
         case 'Changesets_From_Comments':
+            # Define the field names (The order of these fields must match the order of the columns in database):
+            field_names = [
+                'row_num', 
+                'task_group', 
+                'q1_hash_id', 
+                'q1_mercurial_type', 
+                'q1_full_link', 
+                'q2_hash_id', 
+                'q2_mercurial_type', 
+                'q2_is_backed_out_changeset', 
+                'q2_backed_out_by', 
+                'q2_bug_ids', 
+                'q2_parent_hashes', 
+                'bugzilla_resolution', 
+                'is_processed'
+            ]
+
             records = get_unprocessed_comment_changeset_records(task_group, start_row, end_row)
             record_count = len(records)
-            
-            for i in range(record_count):
-                Row_Num, Q1_Hash_ID, Q1_Mercurial_Type, Q1_Full_Link, Q2_Mercurial_Type, Q2_Is_Backed_Out_Changeset, Q2_Backed_Out_By, Q2_Bug_Ids, Q2_Parent_Hashes, Bugzilla_ID, Bugzilla_Resolution = records[i]
 
+            prev_record = None
+            prev_changeset_saved_info = None
+
+            for i in range(record_count):
+                # Define and Convert the record to namedtuple
+                namedtuple_type = namedtuple('Record', field_names)
+                record = namedtuple_type(*records[i]) # namedtuple type
                 print(f"[{strftime('%m/%d/%Y %H:%M:%S', localtime())}] Remainings: {str(record_count)}. Scraping properties of {changeset_hash_Id}...", end="", flush=True)
 
-                # Check if current hash id is same as previous: quoc continue
-                prev_row_num = records[i-1][0]
-                prev_q1_hash_id = records[i-1][1]
-                if prev_hash_id != None and prev_hash_id[0:5].upper() == Hash_ID[0:5].upper():
-                    # Update the `Bugzilla_Mozilla_Changesets.mercurial_type`, `Bugzilla_Mozilla_Changesets.Is_Processed`, `Bugzilla_Mozilla_Changesets.Bug_Ids` if it is empty (From Bugzilla table) 
-
-                    None
-
-                # Check to see if we should process this changeset or not:
-                should_process = should_process(Hash_ID)
-                if should_process == False:
-                    continue
+                # Case when the row_num is same as previous:
+                # How: (1) multiple `Bugzilla_ID` (row_num: 79190)
+                if prev_record and (record.row_num == record.row_num):
+                    # Check the bug ids from the previous processed changeset to see if they are found in the title or not. If not in title, we can save this bug id for the current processed record.
+                    #if prev_changeset_saved_info and 
+                    # TODO: Quoc - Finish this after the other cases.
+                    return
                 
-                changeset_properties = obtain_changeset_properties_rev(Full_Link)
+                # Case when current hash id is same as previous hash id (which means it has been processed):
+                # How: multiple `q2_mercurial_type` and/or `Bugzilla_ID`
+                elif prev_record and (record.q1_hash_id in prev_record.q1_hash_id or prev_record.q1_hash_id in record.q1_hash_id):
+                    # TODO: Quoc - Finish this after the other cases.
+                    return
+                
+                # Case when we want to make a web request to scrap changeset info:
+                # Cover cases: (1) When q2 doesn't exist. (2) When it's not backout related changesets.
+                # Handle: (1) When hash id is a changeset number.
+                elif record.q2_parent_hashes and (record.q2_is_backed_out_changeset == 0 or record.q2_is_backed_out_changeset == ''):
+                    obtain_changeset_properties_rev(record.q1_full_link)
 
+                    return
+
+                # Update previous record
+                prev_record = record
+
+                
 
 ##################################################################################################### 
 
@@ -718,3 +674,4 @@ if __name__ == "__main__":
     start_scraper(parser_args, 'Changeset_Records_From_Comments')
 
 print(f"[{strftime('%m/%d/%Y %H:%M:%S', localtime())}] PROGRAM FINISHED. EXIT!")
+
