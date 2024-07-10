@@ -364,13 +364,13 @@ WHERE Is_Processed = 0
 ORDER BY Row_Num ASC, Q1_Hash_ID ASC;
 
 
---multiple records with same row_num:
+--Multiple records with same row_num:
 select Row_Num, count(Row_Num) as total
 from Temp_Comment_Changesets_For_Process
 group by Row_Num
 order by total desc;
 
---multiple records with same hash_id:
+--Multiple records with same hash_id:
 --How? Multiple Bugzilla_IDs; multiple Row_Num
 select Q1_Hash_ID, count(Q1_Hash_ID) as total
 from Temp_Comment_Changesets_For_Process
@@ -411,3 +411,35 @@ select * from Bugzilla_Mozilla_Changesets where hash_id like '6cb490697a27%'
 select * from Bugzilla_Mozilla_Changeset_Files where Changeset_Hash_ID='18bb5c07a3b7402ff1263f8ecd47f07fd86052d0'
 
 
+
+
+
+
+
+
+select top 10 * from Bugzilla;
+select top 10 * from Bugzilla_Mozilla_Comment_Changeset_Links;
+select top 10 * from Bugzilla_Mozilla_Changesets;
+
+SELECT *
+FROM [Temp_Comment_Changesets_For_Process]
+WHERE Is_Processed = 0
+    AND Row_Num BETWEEN 0 AND 100000
+	--AND Row_Num = '90778' -- Example of a changeset that in the comment of multiple bug ids.
+	AND Q1_Hash_ID='00c554abfc17'
+ORDER BY Row_Num ASC, Q1_Hash_ID ASC;
+
+--multiple records with same row_num:
+select Row_Num, count(Row_Num) as total
+from Temp_Comment_Changesets_For_Process
+group by Row_Num
+order by total desc;
+
+--multiple records with same hash_id:
+--How? Multiple Bugzilla_IDs; multiple Row_Num
+select Q1_Hash_ID, count(Q1_Hash_ID) as total
+from Temp_Comment_Changesets_For_Process
+group by Q1_Hash_ID
+order by total desc;
+
+select distinct Q1_Hash_ID from Temp_Comment_Changesets_For_Process;

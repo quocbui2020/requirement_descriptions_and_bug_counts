@@ -301,7 +301,11 @@ def obtain_changeset_properties_rev(request_url):
         backed_out_by_match = parent_matches = re.search(r'<strong>&#x2620;&#x2620; backed out by <a style="font-family: monospace" href="/mozilla-central/rev/([0-9a-f]+)">', diff_blocks[0]) # \s*: 0 or more white spaces, (): capturing group.
         backed_out_by = backed_out_by_match.group(1) if backed_out_by_match else None
         if backed_out_by != None and backed_out_by != '':
-            return (backed_out_by, changeset_datetime, parent_hashes, child_hashes, file_changes)
+            return (backed_out_by, changeset_datetime, changeset_number, parent_hashes, child_hashes, file_changes)
+
+        # Extract changest number:
+        changeset_num_match = re.search(r'<td>changeset (\d+)</td>', diff_blocks[0])
+        changeset_number = changeset_num_match.group(1) if changeset_num_match else None
 
         # Extract parent hashes
         parent_matches = re.findall(r'<td>parent \d+</td>\s*<td style="font-family:monospace">\s*<a class="list"\s*href="/mozilla-central/rev/([0-9a-f]+)">', diff_blocks[0]) # \s*: 0 or more white spaces, (): capturing group.
@@ -366,7 +370,7 @@ def obtain_changeset_properties_rev(request_url):
 
             file_changes.append((previous_file_name, updated_file_name, file_status))
 
-        return (backed_out_by, changeset_datetime, parent_hashes, child_hashes, file_changes)
+        return (backed_out_by, changeset_datetime, changeset_number, parent_hashes, child_hashes, file_changes)
 
     except Exception as e:
         print(f"Error: {e}")
@@ -379,7 +383,7 @@ def save_changeset_properties(changeset_hash_id, changeset_properties):
     max_retries = 999  # Number of max attempts if fail sql execution (such as deadlock issue).
     max_connection_attempts = 10  # Number of max attempts to establish a connection.
 
-    backed_out_by, changeset_datetime, parent_hashes, child_hashes, file_changes = changeset_properties  # No need 'changeset_datetime' because it has been mined?
+    backed_out_by, changeset_datetime, changeset_number, parent_hashes, child_hashes, file_changes = changeset_properties  # No need 'changeset_datetime' because it has been mined?
 
     while attempt_number <= max_retries:
         try:
