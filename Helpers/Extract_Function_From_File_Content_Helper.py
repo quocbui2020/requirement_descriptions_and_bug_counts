@@ -193,31 +193,56 @@ class ExtractFunctionFromFileContentHelper:
         return list_of_cpp_functions
     
 
+    ##########################################
+    ################### C ####################
+    ##########################################
+
+    def remove_c_comments(content):
+        return
+    def extract_c_functions(content):
+        list_of_c_functions = []
+        #TODO: finished it
+
+        return list_of_c_functions
+
+
+    ##########################################
+    ############### JavaScript ###############
+    ##########################################
+
+    def remove_js_comments(content):
+        return
+    def extract_js_functions(content):
+        list_of_js_functions = []
+        #TODO: finished it
+
+        return list_of_js_functions
 
 ##########################################
 ##########################################
 # Testing area
-response = requests.get(f"https://hg.mozilla.org/mozilla-central/raw-file/000b7732d8f0996ab5c8e55a98514d592e9391d5/testing/web-platform/harness/wptrunner/browsers/firefox.py")
-full_testing_content = '''
-def functionA(arg_1,
-    arg_2):   
-    inside function A.
+if __name__ == '__main__':
+    response = requests.get(f"https://hg.mozilla.org/mozilla-central/raw-file/000b7732d8f0996ab5c8e55a98514d592e9391d5/testing/web-platform/harness/wptrunner/browsers/firefox.py")
+    full_py_testing_content = '''
+    def functionA(arg_1,
+        arg_2):   
         inside function A.
-    inside function A.
+            inside function A.
+        inside function A.
 
-statement outside of the function.
+    statement outside of the function.
 
-def functionB(arg_1, arg_2):
-    inside function B.
+    def functionB(arg_1, arg_2):
+        inside function B.
 
-class A:
-    def functionC(arg_1, arg_2):
-        inside function C.
+    class A:
+        def functionC(arg_1, arg_2):
+            inside function C.
 
-def functionD(arg_1, arg_2):
-    inside function D.
-'''
+    def functionD(arg_1, arg_2):
+        inside function D.
+    '''
 
-helper = ExtractFunctionFromFileContentHelper()
-response_text_without_comments = helper.remove_python_comments(response.text)
-list_py_functions = helper.extract_python_functions(response_text_without_comments)
+    helper = ExtractFunctionFromFileContentHelper()
+    response_text_without_comments = helper.remove_python_comments(response.text)
+    list_py_functions = helper.extract_python_functions(response_text_without_comments)

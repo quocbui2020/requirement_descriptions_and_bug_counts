@@ -417,7 +417,7 @@ select * from Bugzilla_Mozilla_Changeset_Files where Changeset_Hash_ID='18bb5c07
 
 
 
-select top 10 * from Bugzilla;
+select top 1000 * from Bugzilla;
 select top 10 * from Bugzilla_Mozilla_Comment_Changeset_Links;
 select top 10 * from Bugzilla_Mozilla_Changesets;
 
