@@ -51,6 +51,7 @@ get_unprocessed_comment_changesets_query = '''
         ,[Q1_Hash_ID]
         ,[Q1_Mercurial_Type]
         ,[Q1_Full_Link]
+        ,[Q1_ID]
         ,[Q2_Hash_Id]
         ,[Q2_Mercurial_Type]
         ,[Q2_Is_Backed_Out_Changeset]
@@ -59,12 +60,13 @@ get_unprocessed_comment_changesets_query = '''
         ,[Q2_Parent_Hashes]
         ,[Bugzilla_ID]
         ,[Bugzilla_Resolution]
-        ,[Is_Processed]
+        ,[Process_Status]
+        ,[ID] --unique identifier
     FROM [Temp_Comment_Changesets_For_Process]
-    WHERE Is_Processed = 0
+    WHERE Process_Status is null
     AND Task_Group = ?
     AND Row_Num BETWEEN ? AND ?
-    ORDER BY Row_Num ASC, Q1_Hash_ID ASC;
+    ORDER BY Row_Num ASC, Q1_Hash_ID ASC; 
 '''
 
 save_changeset_parent_child_hashes_query = '''
@@ -260,14 +262,15 @@ def obtain_changeset_properties_raw_rev(changeset_link):
         traceback.print_exc()
         exit()
 
-# obtain_changeset_properties_rev: scrapping the changeset properties from the rev version: (backed_out_by, changeset_datetime, parent_hashes, child_hashes, file_changes)
-def obtain_changeset_properties_rev(request_url):
+# get_changeset_properties_rev: scrapping the changeset properties from the rev version: (backed_out_by, changeset_datetime, parent_hashes, child_hashes, file_changes)
+def get_changeset_properties_rev(request_url):
     attempt_number = 1
     max_retries = 20 # if we attempt to make web request 20 times, I think it's safe to stop re-trying.
-
+    response_status_code = 0
     try:
         while attempt_number <= max_retries:
             try:
+                request_url = 'https://hg.mozilla.org//mozilla-central/rev/000091da2b92ddcb030cfc39f6c7271be6d50af7' # Quoc: This is a test url
                 response = requests.get(request_url)
             except requests.exceptions.RequestException as e: # Handle case when the request connection failed
                 print(f"Failed request connection.\nRetrying in 10 seconds...", end="", flush=True)
@@ -275,7 +278,9 @@ def obtain_changeset_properties_rev(request_url):
                 attempt_number += 1
                 continue
 
-            if response.status_code == 200:
+            response_status_code = response.status_code
+
+            if response_status_code == 200 or response_status_code == 404:
                 break
             else: # Handle case when request returns status code other than `200`
                 print(f"{str(response.status_code)}.\nRetrying in 10 seconds...", end="", flush=True)
@@ -293,31 +298,65 @@ def obtain_changeset_properties_rev(request_url):
         changeset_datetime = ''
         parent_hashes = ''
         child_hashes = ''
+        changeset_hash_id = ''
+        changeset_number = ''
+        changeset_summary_raw_content = ''
+        bug_ids_from_summary = ''
+        is_backed_out_changeset = False
+        backout_hashes = ''
+
+        ChangesetProperties = namedtuple('ChangesetProperties', ['backed_out_by', 'changeset_datetime', 'changeset_number', 'hash_id', 'parent_hashes', 'child_hashes', 'file_changes', 'response_status_code', 'changeset_summary_raw_content', 'bug_ids_from_summary', 'is_backed_out_changeset', 'backout_hashes'])
+        returnResult = ChangesetProperties(backed_out_by, changeset_datetime, changeset_number, changeset_hash_id, parent_hashes, child_hashes, file_changes, response_status_code, changeset_summary_raw_content, bug_ids_from_summary, is_backed_out_changeset, backout_hashes)
 
         # Split the content
         diff_blocks = content.split(".1\"></a><span id=\"l")
 
-        # Check if there is 'backed out by' message:
-        backed_out_by_match = parent_matches = re.search(r'<strong>&#x2620;&#x2620; backed out by <a style="font-family: monospace" href="/mozilla-central/rev/([0-9a-f]+)">', diff_blocks[0]) # \s*: 0 or more white spaces, (): capturing group.
-        backed_out_by = backed_out_by_match.group(1) if backed_out_by_match else None
-        if backed_out_by != None and backed_out_by != '':
-            return (backed_out_by, changeset_datetime, changeset_number, parent_hashes, child_hashes, file_changes)
+        # quoc continue: if the changeset is backed out by, we still want to collect some info from it, right? think about it
+        # Return when the changeset is backed out by other or 404 status code:
+        backed_out_by_match = re.search(r'<strong>&#x2620;&#x2620; backed out by <a style="font-family: monospace" href="/mozilla-central/rev/([0-9a-f]+)">', diff_blocks[0]) # \s*: 0 or more white spaces, (): capturing group.
+        backed_out_by = backed_out_by_match.group(1) if backed_out_by_match else ''
+        if response_status_code == 404 or (backed_out_by != None and backed_out_by != ''):
+            return returnResult
 
-        # Extract changest number:
-        changeset_num_match = re.search(r'<td>changeset (\d+)</td>', diff_blocks[0])
-        changeset_number = changeset_num_match.group(1) if changeset_num_match else None
+        # Extract changeset number and changeset hash id:
+        changeset_hash_id_match = re.search(r'<title>.+changeset\s(\d+):([0-9a-f]+)<\/title>', diff_blocks[0])
+        changeset_number, changeset_hash_id = changeset_hash_id_match.group(1), changeset_hash_id_match.group(2) if changeset_hash_id_match else None
+
+        # Extract the changeset summary (title):
+        changeset_summary_match = re.search(r'<div class="page_body description">(.+?)</div>', diff_blocks[0], re.DOTALL) # re.DOTALL: single line
+        changeset_summary_raw_content = changeset_summary_match.group(1) if changeset_summary_match else None
+
+        # Remove HTML tags from the changeset summary content
+        # changeset_summary_html_removed = re.sub(r'<.*?>', '', changeset_summary_raw_content).strip()
+
+        # Extract the list of bug IDs from changeset summary/title:
+        bug_id_matches = re.findall(r'show_bug.cgi\?id=(\d+)', changeset_summary_raw_content)
+        if bug_id_matches:
+            unique_bug_ids = set(bug_id_matches)  # Use a set to get unique bug IDs
+            bug_ids_from_summary = " | ".join(sorted(unique_bug_ids))
+
+        # If it's backout changeset, extract back out hashes:
+        content_block_contains_backout_hashes_match = re.search(r'<td>backs out<\/td>(.+?)<\/tr>',diff_blocks[0], re.DOTALL) # ? quantifier: matches as few characters as possible. This to ensure its search content stopped at the very first </tr> it encouters, not the last one.
+        backouted_hashes_matches = re.findall(r'\/rev\/([0-9a-fA-F]+)">', content_block_contains_backout_hashes_match.group(0), re.DOTALL) if content_block_contains_backout_hashes_match else None
+        backout_hashes = " | ".join(set(backouted_hashes_matches)) if backouted_hashes_matches else ''
+
+        # Extract for backout keywords - indicate this is a backout changeset (re.IGNORECASE: case-insensitive):
+        if backout_hashes != '' or re.search(r'\bback.{0,8}out\b', changeset_summary_raw_content, re.IGNORECASE): # If there is a keyword 'back out' in the summary content, then we know this is the backout changeset.
+            is_backed_out_changeset = True
+        else:
+            is_backed_out_changeset = False
 
         # Extract parent hashes
-        parent_matches = re.findall(r'<td>parent \d+</td>\s*<td style="font-family:monospace">\s*<a class="list"\s*href="/mozilla-central/rev/([0-9a-f]+)">', diff_blocks[0]) # \s*: 0 or more white spaces, (): capturing group.
+        parent_matches = re.findall(r'<td>parent \d+</td>\s*<td style="font-family:monospace">\s*<a class="list"\s*href="/.+/rev/([0-9a-f]+)">', diff_blocks[0]) # \s*: 0 or more white spaces, (): capturing group.
         parent_hashes = " | ".join(parent_matches) # Note: If no matched, it will be empty string.
 
         # Extract child hashes
-        child_matches = re.findall(r'<td>child \d+</td>\s*<td style="font-family:monospace">\s*<a class="list"\s*href="/mozilla-central/rev/([0-9a-f]+)">', diff_blocks[0])
+        child_matches = re.findall(r'<td>child \d+</td>\s*<td style="font-family:monospace">\s*<a class="list"\s*href="/.+/rev/([0-9a-f]+)">', diff_blocks[0])
         child_hashes = " | ".join(child_matches) # Note: If no matched, it will be empty string.
 
         # Extract changeset datetime
         datetime_match = re.search(r'<td class="date age">(.*?)</td>', diff_blocks[0])
-        changeset_datetime = datetime_match.group(1) if datetime_match else None
+        changeset_datetime = datetime.strptime(datetime_match.group(1), '%a, %d %b %Y %H:%M:%S %z').strftime('%Y-%m-%d %H:%M %z') if datetime_match else None
 
         # Extract file changes
         for block in diff_blocks[1:]:
@@ -369,8 +408,8 @@ def obtain_changeset_properties_rev(request_url):
                 continue
 
             file_changes.append((previous_file_name, updated_file_name, file_status))
-
-        return (backed_out_by, changeset_datetime, changeset_number, parent_hashes, child_hashes, file_changes)
+            
+            return returnResult
 
     except Exception as e:
         print(f"Error: {e}")
@@ -383,7 +422,7 @@ def save_changeset_properties(changeset_hash_id, changeset_properties):
     max_retries = 999  # Number of max attempts if fail sql execution (such as deadlock issue).
     max_connection_attempts = 10  # Number of max attempts to establish a connection.
 
-    backed_out_by, changeset_datetime, changeset_number, parent_hashes, child_hashes, file_changes = changeset_properties  # No need 'changeset_datetime' because it has been mined?
+    backed_out_by, changeset_datetime, changeset_number, hash_id, parent_hashes, child_hashes, file_changes, response_status_code, changeset_summary_raw_content, bug_ids_from_summary = changeset_properties  # No need 'changeset_datetime' because it has been mined?
 
     while attempt_number <= max_retries:
         try:
@@ -522,12 +561,11 @@ def get_unprocessed_comment_changeset_records(task_group, start_row, end_row):
         print("\nFailed after maximum retry attempts due to deadlock.")
         exit()
 
-
-# save_comment_changeset_properties: this function saves all the properties of the comment changeset after finished processed:
-# Save the `Bugzilla_Mozilla_Changesets.mercurial_type`, `Bugzilla_Mozilla_Changesets.Is_Processed`, `Bugzilla_Mozilla_Changesets.Bug_Ids` if it is empty (From Bugzilla table)
-def save_comment_changeset_properties():
-    global should_not_process_query, conn_str
-
+def get_bugzilla_mozilla_changesets_by_hash_id(hash_id):
+    if not hash_id:
+        return None
+    
+    global conn_str
     attempt_number = 1
     max_retries = 999 # max retry for deadlock issue.
 
@@ -536,13 +574,24 @@ def save_comment_changeset_properties():
             conn = pyodbc.connect(conn_str)
             cursor = conn.cursor()
 
-            cursor.execute('''UPDATE FROM ''', (f"{hash_id}%"))
-            queryResult = cursor.fetchone()
-
-            if not queryResult or queryResult[0] == None:
-                return True
-            return False
-        
+            cursor.execute('''
+                SELECT [Hash_Id]
+                    ,[Changeset_Summary]
+                    ,[Bug_Ids] -- Found in the changeset title/summary
+                    ,[Changeset_Link]
+                    ,[Mercurial_Type]
+                    ,[Changeset_Datetime]
+                    ,[Is_Backed_Out_Changeset]
+                    ,[Backed_Out_By]
+                    ,[Parent_Hashes]
+                    ,[Child_Hashes]
+                    ,[Bugzilla_Ids] -- Where the changeset links founded.
+                FROM [dbo].[Bugzilla_Mozilla_Changesets]
+                WHERE [Hash_Id] = ?
+                ''', (hash_id))
+            
+            return namedtuple('ChangesetQueryResult', ['hash_id', 'changeset_summary', 'bug_ids', 'changeset_link', 'mercurial_type', 'changeset_datetime', 'is_backed_out_changeset', 'backed_out_by', 'parent_hashes', 'child_hashes', 'bugzilla_ids'])(*cursor.fetchone())
+    
         except pyodbc.Error as e:
             error_code = e.args[0]
             if error_code in ['40001', '40P01']:  # Deadlock error codes
@@ -550,12 +599,12 @@ def save_comment_changeset_properties():
                 time.sleep(5)
                 if attempt_number < max_retries:
                     continue
-            print(f"Error - should_process({hash_id}): {e}.")
+            print(f"Error - Deadlock.")
             exit()
 
         except Exception as e:
             # Handle any exceptions
-            print(f"Error - should_process({hash_id}): {e}.")
+            print(f"Error - Failed DB Access.")
             traceback.print_exc()
             exit()
 
@@ -569,11 +618,136 @@ def save_comment_changeset_properties():
         print("\nFailed after maximum retry attempts due to deadlock.")
         exit()
 
-def start_scraper(parser_args, scraper_type):
-    task_group = parser_args.arg_1
-    start_row = parser_args.arg_2
-    end_row = parser_args.arg_3
 
+# save_comment_changeset_properties: this function saves all the properties of the comment changeset after finished processed:
+# Save the `Bugzilla_Mozilla_Changesets.mercurial_type`, `Bugzilla_Mozilla_Changesets.Is_Processed`, `Bugzilla_Mozilla_Changesets.Bug_Ids` if it is empty (From Bugzilla table)
+def save_comment_changeset_properties(process_status, record, changeset_properties, most_recent_bug_mozilla_changeset):
+    global conn_str, save_bugzilla_mozilla_changesets
+    attempt_number = 1
+    max_retries = 999 # max retry for deadlock issue.
+    max_connection_attempts = 10  # Number of max attempts to establish a connection.
+
+    while attempt_number <= max_retries:
+        try:
+            conn = pyodbc.connect(conn_str)
+            cursor = conn.cursor()
+
+            #########################################################
+            ## Section: save `Temp_Comment_Changesets_For_Process` ##
+            #########################################################
+            cursor.execute('''
+                UPDATE [Temp_Comment_Changesets_For_Process]
+                SET [Is_Finished_Process] = 1
+                    ,[Process_Status] = ?
+                WHERE [ID] = ?
+                ''', (process_status, record.id))
+
+
+            ##############################################################
+            ## Section: save `Bugzilla_Mozilla_Comment_Changeset_Links` ##
+            ##############################################################
+            is_valid_link = 1
+
+            if changeset_properties.response_status_code == 404:
+                is_valid_link = 0
+                changeset_hash_id = record.q1_hash_id
+
+            cursor.execute('''
+                UPDATE [Bugzilla_Mozilla_Comment_Changeset_Links]
+                SET [Hash_ID] = ?
+                    ,[Is_Valid_Link] = ?
+                    ,[Is_Processed] = 1
+                WHERE [ID] = ?
+                ''', (changeset_hash_id, is_valid_link, record.q1_id))
+
+            conn.commit()
+
+            # if response_status_code is 404, we don't want to update [Bugzilla_Mozilla_Changesets] and [Bugzilla_Mozilla_Changeset_Files]
+            if changeset_properties.response_status_code == 404:
+                return # statements in 'finally' will still be executed when return.
+
+
+            ###############################################################################################
+            ## Section: save `Bugzilla_Mozilla_Changesets` (Important, need this table to be more clean) ##
+            ###############################################################################################
+            
+            # Prepare fields for saving to db.
+            # Changeset could be founded in multiple bugzilla link.
+            bugzilla_ids_list_string = most_recent_bug_mozilla_changeset.bugzilla_ids if most_recent_bug_mozilla_changeset and most_recent_bug_mozilla_changeset.bugzilla_ids else ''
+            bugzilla_ids_list_string = bugzilla_ids_list_string + " | " + record.bugzilla_id  if bugzilla_ids_list_string != '' else record.bugzilla_id
+
+            # Changeset could have multiple mercurial types:
+            mercurial_type_list = most_recent_bug_mozilla_changeset.mercurial_type.split(" | ") if most_recent_bug_mozilla_changeset and most_recent_bug_mozilla_changeset.mercurial_type else []
+            mercurial_type_list.append(record.q1_mercurial_type)
+            mercurial_type_list = list(set(mercurial_type_list)) # ensure the list contains unique values
+            mercurial_type_list_string = " | ".join(mercurial_type_list)
+
+            if most_recent_bug_mozilla_changeset:
+                cursor.execute('''
+                    UPDATE [Bugzilla_Mozilla_Changesets]
+                    SET [Bugzilla_Ids] = ?
+                        ,[Mercurial_Type] = ?
+                    WHERE [Hash_ID] = ?
+                    ''', (bugzilla_ids_list_string, mercurial_type_list_string, record.q2_hash_id))
+
+            else:
+                updated_bug_id = changeset_properties.bug_ids_from_summary
+                # cursor.execute('''
+                # INSERT INTO [dbo].[Bugzilla_Mozilla_Changesets]
+                #     ([Hash_Id]
+                #     ,[Changeset_Summary]
+                #     ,[Bug_Ids]
+                #     ,[Changeset_Link]
+                #     ,[Mercurial_Type]
+                #     ,[Changeset_Datetime]
+                #     ,[Is_Backed_Out_Changeset]
+                #     ,[Backed_Out_By]
+                #     ,[Backout_Hashes]
+                #     ,[Parent_Hashes]
+                #     ,[Child_Hashes]
+                #     ,[Inserted_On] -- SYSUTCDATETIME()
+                #     ,[Task_Group]) -- NULL
+                # VALUES
+                #     (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, SYSUTCDATETIME(), NULL)
+                # ''', (changeset_properties.hash_id, changeset_properties.changeset_summary_raw_content, changeset_properties.bug_ids_from_summary, record.q1_full_link, record.q1_mercurial_type, changeset_properties.changeset_datetime, changeset_properties.is_backed_out_changeset, changeset_properties.backed_out_by, changeset_properties.backout_hashes, changeset_properties.parent_hashes, changeset_properties.child_hashes))
+
+
+            # save `Bugzilla_Mozilla_Changeset_Files`:
+            cursor.execute('''
+                UPDATE [Bugzilla_Mozilla_Changeset_Files]
+                SET
+                WHERE [ID] = ?
+                ''', ())
+
+            conn.commit()
+
+        except pyodbc.Error as e:
+            error_code = e.args[0]
+            if error_code in ['40001', '40P01']:  # Deadlock error codes
+                attempt_number += 1
+                time.sleep(5)
+                if attempt_number < max_retries:
+                    continue
+            print(f"Error - Deadlock.")
+            exit()
+
+        except Exception as e:
+            # Handle any exceptions
+            print(f"Error - Failed DB Access.")
+            traceback.print_exc()
+            exit()
+
+        finally:
+            # Close the cursor and connection if they are not None
+            if cursor:
+                cursor.close()
+            if conn:
+                conn.close()
+    else:
+        print("\nFailed after maximum retry attempts due to deadlock.")
+        exit()
+
+def start_scraper(task_group, start_row, end_row, scraper_type):
     match scraper_type:
         # Process changesets found in the ShortLog (Onyl Mozilla-Central at the moment)
         case 'Changesets_From_ShortLog':
@@ -600,7 +774,7 @@ def start_scraper(parser_args, scraper_type):
                     print("Skipped - Bugs Not 'Resolved'")
                     continue
 
-                changeset_properties = obtain_changeset_properties_rev(f"https://hg.mozilla.org{str(Changeset_Link)}")
+                changeset_properties = get_changeset_properties_rev(f"https://hg.mozilla.org{str(Changeset_Link)}")
 
                 # Save to database:
                 complete_status = save_changeset_properties(changeset_hash_Id, changeset_properties)
@@ -617,14 +791,17 @@ def start_scraper(parser_args, scraper_type):
                 'q1_hash_id', 
                 'q1_mercurial_type', 
                 'q1_full_link', 
+                'q1_id', # foreign key to [Bugzilla_Mozilla_Comment_Changeset_Links]
                 'q2_hash_id', 
                 'q2_mercurial_type', 
                 'q2_is_backed_out_changeset', 
                 'q2_backed_out_by', 
                 'q2_bug_ids', 
-                'q2_parent_hashes', 
+                'q2_parent_hashes',
+                'bugzilla_id',
                 'bugzilla_resolution', 
-                'is_processed'
+                'process_status',
+                'id'
             ]
 
             records = get_unprocessed_comment_changeset_records(task_group, start_row, end_row)
@@ -637,45 +814,72 @@ def start_scraper(parser_args, scraper_type):
                 # Define and Convert the record to namedtuple
                 namedtuple_type = namedtuple('Record', field_names)
                 record = namedtuple_type(*records[i]) # namedtuple type
-                print(f"[{strftime('%m/%d/%Y %H:%M:%S', localtime())}] Remainings: {str(record_count)}. Scraping properties of {changeset_hash_Id}...", end="", flush=True)
+                process_status = ''
+                print(f"[{strftime('%m/%d/%Y %H:%M:%S', localtime())}] Remainings: {str(record_count)}. Process row number {record.row_num}...", end="", flush=True)
+
+                # Get the most recent record of bugzilla_changeset by hash id.
+                most_recent_bug_mozilla_changeset = get_bugzilla_mozilla_changesets_by_hash_id(record.q2_hash_id)
 
                 # Case when the row_num is same as previous:
                 # How: (1) multiple `Bugzilla_ID` (row_num: 79190)
-                if prev_record and (record.row_num == record.row_num):
+                if prev_record and (record.row_num == prev_record.row_num):
                     # Check the bug ids from the previous processed changeset to see if they are found in the title or not. If not in title, we can save this bug id for the current processed record.
                     #if prev_changeset_saved_info and 
                     # TODO: Quoc - Finish this after the other cases.
-                    return
+                    process_status = "Skipped: Dup Row"
                 
-                # Case when current hash id is same as previous hash id (which means it has been processed):
+                # Cases when current hash id is same as previous hash id (which means it has been processed):
                 # How: multiple `q2_mercurial_type` and/or `Bugzilla_ID`
                 elif prev_record and (record.q1_hash_id in prev_record.q1_hash_id or prev_record.q1_hash_id in record.q1_hash_id):
                     # TODO: Quoc - Finish this after the other cases.
-                    return
+                    process_status = "Skipped: Has Been Processeds"
                 
-                # Case when we want to make a web request to scrap changeset info:
-                # Cover cases: (1) When q2 doesn't exist. (2) When it's not backout related changesets.
+                # Cases when we want to make a web request to scrap changeset info:
+                # Cover cases: (1) When q2 doesn't exist. (2) When it's not backout related changesets. (3) When bug_id='' (No bug id found in changeset title - We process it if it found in the bug comment).
                 # Handle: (1) When hash id is a changeset number.
-                elif record.q2_parent_hashes and (record.q2_is_backed_out_changeset == 0 or record.q2_is_backed_out_changeset == ''):
-                    obtain_changeset_properties_rev(record.q1_full_link)
+                # Goal: we don't want to scrap the changeset link again if it has been done.
+                elif (not most_recent_bug_mozilla_changeset) or (not record.q2_parent_hashes and (record.q2_is_backed_out_changeset == False or record.q2_backed_out_by == None or record.q2_backed_out_by == '')):
+                    changeset_properties = get_changeset_properties_rev(record.q1_full_link)
 
-                    return
+                    # Determine the process_status for processed changeset:
+                    if changeset_properties.response_status_code == 404:
+                        process_status = "Processed: 404"
+                    elif (not changeset_properties.bug_ids_from_summary or changeset_properties.bug_ids_from_summary == '') and (not record.q2_bug_ids or record.q2_bug_ids == ''):
+                        process_status = "Processed: No Bug Ids in Changeset Title"
+                    elif changeset_properties.backed_out_by:
+                        process_status = "Processed: Backed out"
+                    else:
+                        process_status = "Processed"
+                
+                # save to database:
+                save_comment_changeset_properties(process_status, record , changeset_properties, most_recent_bug_mozilla_changeset)
 
                 # Update previous record
                 prev_record = record
 
-                
+                print("Done")
+                record_count = record_count - 1
+
+
 
 ##################################################################################################### 
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="")
-    parser.add_argument('arg_1', type=int, help='Argument 1')
-    parser.add_argument('arg_2', type=int, help='Argument 2')
-    parser.add_argument('arg_3', type=int, help='Argument 3')
-    parser_args = parser.parse_args()
+    # parser = argparse.ArgumentParser(description="")
+    # parser.add_argument('arg_1', type=int, help='Argument 1')
+    # parser.add_argument('arg_2', type=int, help='Arg ument 2')
+    # parser.add_argument('arg_3', type=int, help='Argument 3')
+    # parser_args = parser.parse_args()
+    # task_group = parser_args.arg_1
+    # start_row = parser_args.arg_2
+    # end_row = parser_args.arg_3
+
+    # Testing input arguments:
+    task_group = 1   # Task group
+    start_row = 7   # Start row
+    end_row = 7   # End row
     
-    start_scraper(parser_args, 'Changeset_Records_From_Comments')
+    start_scraper(task_group, start_row, end_row, 'Changesets_From_Comments')
 
 print(f"[{strftime('%m/%d/%Y %H:%M:%S', localtime())}] PROGRAM FINISHED. EXIT!")
 

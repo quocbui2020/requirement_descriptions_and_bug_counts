@@ -124,6 +124,7 @@ def crawl_mozilla_central_shortlog(hash_id, max_retries=5):
                 Does_Required_Human_Inspection = True
 
             # Check for backout keywords
+            Is_Backed_Out_Changeset = False
             if re.search(r'\bback.{0,8}out\b', Changeset_Summary, re.IGNORECASE):
                 Is_Backed_Out_Changeset = True
             else:

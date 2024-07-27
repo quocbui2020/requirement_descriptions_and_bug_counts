@@ -175,7 +175,6 @@ GROUP BY Changeset_Hash_ID
 order by RecordCount desc;
 
 
-
 --------------------------------------------------
 --------------------------------------------------
 /* Extract data from [Bugzilla].[changeset_links] column into [Bugzilla_Mozilla_Comment_Changeset_Links] table */
@@ -321,23 +320,25 @@ WITH Q1 AS (
         ,Task_Group
         ,Is_Processed
 		,Changeset_Links
+		,ID -- *Unique identifier
     FROM Bugzilla_Mozilla_Comment_Changeset_Links
-    WHERE Task_Group = 1
+    WHERE Task_Group >= 3
 )
 , Q2 AS (
-	SELECT Hash_Id -- Hash id is always 40 characters.
+	SELECT Hash_Id -- *Unique identifier. Hash id is always 40 characters.
 		,Is_Backed_Out_Changeset, Mercurial_Type
 		,Backed_Out_By
 		,Bug_Ids
 		,Parent_Hashes
 	FROM Bugzilla_Mozilla_Changesets bmc
 )
---INSERT INTO Temp_Comment_Changesets_For_Process
+INSERT INTO Temp_Comment_Changesets_For_Process
 SELECT Q1.Row_Num
 	,Q1.Task_Group
 	,Q1.Hash_ID AS Q1_Hash_ID
 	,Q1.Mercurial_Type AS Q1_Mercurial_Type
 	,Q1.Full_Link AS Q1_Full_Link
+	,Q1.ID AS Q1_ID
 	,Q2.Hash_Id AS Q2_Hash_Id
 	,Q2.Mercurial_Type AS Q2_Mercurial_Type
 	,Q2.Is_Backed_Out_Changeset AS Q2_Is_Backed_Out_Changeset
@@ -346,41 +347,89 @@ SELECT Q1.Row_Num
 	,Q2.Parent_Hashes AS Q2_Parent_Hashes -- If Parent_Hashes is not null, then we know that it has been processed
 	,Bugzilla.id AS Bugzilla_ID -- Bug id where the changeset comment located (Not as realiable since comments are written in not-no-systematic way).
 	,Bugzilla.resolution AS Bugzilla_Resolution -- `resolution` should always be 'FIXED' since we only consider resolved bug when crawling for comment changeset links.
+	,0 -- Is_Finished_Process
+	, NULL -- Process_Status
+	, NEWID()
 FROM Q1
 LEFT JOIN Q2 ON LEFT(Q2.Hash_Id, LEN(Q1.Hash_Id)) = Q1.Hash_Id -- Join 2 tables using wildcard operation (Not good, take too much time)
 LEFT JOIN Bugzilla ON Bugzilla.changeset_links = Q1.Changeset_Links
 WHERE Q1.Is_Processed = 0
     --AND Q1.Row_Num BETWEEN 0 AND 10
-	AND Q1.Row_Num = '87474' -- Example of a changeset that in the comment of multiple bug ids.
+	--AND Q1.Row_Num = '87474' -- Example of a changeset that in the comment of multiple bug ids.
 ORDER BY Q1.Row_Num ASC, Q1_Hash_ID ASC;
+
 
 -- quoc continue
 -- Get records to process:
 SELECT *
 FROM [Temp_Comment_Changesets_For_Process]
-WHERE Is_Processed = 0
+WHERE Is_Finished_Process = 0
     --AND Row_Num BETWEEN 0 AND 10
 	AND Row_Num = '87474' -- Example of a changeset that in the comment of multiple bug ids.
 ORDER BY Row_Num ASC, Q1_Hash_ID ASC;
 
 
---Multiple records with same row_num:
+-- Multiple records with same row_num:
+-- How? 
 select Row_Num, count(Row_Num) as total
 from Temp_Comment_Changesets_For_Process
 group by Row_Num
 order by total desc;
 
---Multiple records with same hash_id:
---How? Multiple Bugzilla_IDs; multiple Row_Num
+-- Multiple records with same hash_id:
+-- How? Multiple Bugzilla_IDs; multiple Row_Num
 select Q1_Hash_ID, count(Q1_Hash_ID) as total
 from Temp_Comment_Changesets_For_Process
 group by Q1_Hash_ID
 order by total desc;
 
+select * from Temp_Comment_Changesets_For_Process order by Row_Num asc;
+-- All unique test cases --
+-- 1. Backed out record with existing Q2:
+select * from Temp_Comment_Changesets_For_Process where Q1_Hash_ID = '00002cc231f4'; -- Back out
+	select * from Bugzilla_Mozilla_Changesets where Hash_Id = '00002cc231f4a7031bd7595c64fa11a50fe662d8';
+	
+-- 2.Multiple Row_Num with same Q1_Hash_ID:
+select * from Temp_Comment_Changesets_For_Process where Q1_Hash_ID = '00003cb750ff';
+	select * from Bugzilla_Mozilla_Changesets where Hash_Id = '00003cb750ff78cd50f0f2be2632f7633bec4261';
+
+-- 3. Case when bug_id is not found in title (Q2_Bug_Ids == ''):
+select * from Temp_Comment_Changesets_For_Process where Q1_Hash_ID='000913999cd2'
+	select * from Bugzilla_Mozilla_Changesets where Hash_Id like '000913999cd2%'
+
+-- 4. Record to process (Q1 without Q2):
+select * from Temp_Comment_Changesets_For_Process where Q1_Hash_ID='00006aaabfc4'
+	select * from Bugzilla_Mozilla_Changesets where Hash_Id like '00006aaabfc4%'
+
+--5. Cases Q1_Hash_ID has multiple Bugzilla_ID (Due to the links located in multiple bug pages).
+select * from Temp_Comment_Changesets_For_Process where Q2_Hash_Id='13e95c7ff78be26bff0d3274c518066419bb83c1'
+
+--6 Cases Q1_Hash_ID has multiple Q2 (Dangerous! Because some Q2 may not associate with Q1) -- Do not think this is the case anymore
+select * from Temp_Comment_Changesets_For_Process where Q1_Hash_ID='0dff9f803849'
+
+--7. Cases when changeset is backed out by. -> Update the backed out by of other changeset if exists
+--https://hg.mozilla.org/mozilla-central/rev/00002cc231f4a7031bd7595c64fa11a50fe662d8
+
+--8. Cases when changeset link is changeset number instead of hashes
+
+--9. Cases when the changeset link is a back out changeset (is_backed_out_changeset is true)
+--https://hg.mozilla.org/mozilla-central/rev/000091da2b92ddcb030cfc39f6c7271be6d50af7
 
 
 
+WITH Q1 AS (
+	select distinct Q1_Hash_ID, Q2_Hash_Id
+	from Temp_Comment_Changesets_For_Process
+	where Q2_Hash_Id is not null
+)
+select Q1_Hash_ID, count(Q1_Hash_ID) as total
+from Q1
+group by Q1_Hash_ID
+order by total desc;
 
+select * from Temp_Comment_Changesets_For_Process
+where Q2_Hash_Id is not null
+order by Q1_Hash_ID;
 ----------------------------------------------------------------------------------------------
 ----------------------------------------------------------------------------------------------
 /* WORKING AREA */
@@ -410,36 +459,3 @@ select * from Bugzilla_Mozilla_Changesets where hash_id like '6cb490697a27%'
 
 select * from Bugzilla_Mozilla_Changeset_Files where Changeset_Hash_ID='18bb5c07a3b7402ff1263f8ecd47f07fd86052d0'
 
-
-
-
-
-
-
-
-select top 1000 * from Bugzilla;
-select top 10 * from Bugzilla_Mozilla_Comment_Changeset_Links;
-select top 10 * from Bugzilla_Mozilla_Changesets;
-
-SELECT *
-FROM [Temp_Comment_Changesets_For_Process]
-WHERE Is_Processed = 0
-    AND Row_Num BETWEEN 0 AND 100000
-	--AND Row_Num = '90778' -- Example of a changeset that in the comment of multiple bug ids.
-	AND Q1_Hash_ID='00c554abfc17'
-ORDER BY Row_Num ASC, Q1_Hash_ID ASC;
-
---multiple records with same row_num:
-select Row_Num, count(Row_Num) as total
-from Temp_Comment_Changesets_For_Process
-group by Row_Num
-order by total desc;
-
---multiple records with same hash_id:
---How? Multiple Bugzilla_IDs; multiple Row_Num
-select Q1_Hash_ID, count(Q1_Hash_ID) as total
-from Temp_Comment_Changesets_For_Process
-group by Q1_Hash_ID
-order by total desc;
-
-select distinct Q1_Hash_ID from Temp_Comment_Changesets_For_Process;
