@@ -2,7 +2,7 @@
 USE master;
 EXEC sp_detach_db @dbname = 'ResearchDatasets';
 
--- Attach database:
+-- Attach database (Useful query when we rename the machine):
 USE master;
 GO
 CREATE DATABASE ResearchDatasets

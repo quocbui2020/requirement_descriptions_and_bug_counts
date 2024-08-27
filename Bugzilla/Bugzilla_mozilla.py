@@ -21,7 +21,7 @@ logging.basicConfig(level=logging.INFO, filename=f"C:\\Users\\quocb\\Quoc Bui\\S
 
 # Connect to the database
 conn = pyodbc.connect('DRIVER={ODBC Driver 18 for SQL Server};'
-                        'SERVER=QUOCBUI\\MSSQLSERVER01;'
+                        'SERVER=QUOCBUI-PERSONA\\MSSQLSERVER01;'
                         'DATABASE=ResearchDatasets;'
                         'LongAsMax=yes;'
                         'TrustServerCertificate=yes;'

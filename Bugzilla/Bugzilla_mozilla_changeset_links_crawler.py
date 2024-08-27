@@ -15,7 +15,7 @@ import argparse
 
 # Connection string
 conn_str = 'DRIVER={ODBC Driver 18 for SQL Server};' \
-           'SERVER=QUOCBUI\\MSSQLSERVER01;' \
+           'SERVER=QUOCBUI-PERSONA\\MSSQLSERVER01;' \
            'DATABASE=ResearchDatasets;' \
            'LongAsMax=yes;' \
            'TrustServerCertificate=yes;' \
