@@ -1088,7 +1088,8 @@ def start_scraper(task_group, start_row, end_row, scraper_type):
 
                 # Update previous record
                 prev_temp_comment_changesets_for_process = temp_comment_changesets_for_process
-                prev_changeset_properties = changeset_properties
+                if process_status.startswith("Processed"):
+                    prev_changeset_properties = changeset_properties
 
                 print("Done")
                 record_count = record_count - 1
