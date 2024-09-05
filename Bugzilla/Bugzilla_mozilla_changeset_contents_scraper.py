@@ -110,6 +110,7 @@ def get_records_to_process(task_group, start_row, end_row):
                 if attempt_number < max_retries:
                     continue
             print(f"Error - get_records_to_process({start_row}, {end_row}): {e}.")
+            traceback.print_exc()
             exit()
 
         except Exception as e:
@@ -154,6 +155,7 @@ def is_resolved_bug(bug_id):
                 if attempt_number < max_retries:
                     continue
             print(f"Error - is_resolved_bug({bug_id}): {e}.")
+            traceback.print_exc()
             exit()
 
         except Exception as e:
@@ -414,7 +416,19 @@ def get_changeset_properties_rev(request_url):
 
             file_changes.append((previous_file_name, updated_file_name, file_status))
             
-        return ChangesetProperties(backed_out_by, changeset_datetime, changeset_number, changeset_hash_id, parent_hashes, child_hashes, file_changes, response_status_code, changeset_summary_raw_content, bug_ids_from_summary, is_backed_out_changeset, backout_hashes)
+        return ChangesetProperties(
+            backed_out_by, 
+            changeset_datetime, 
+            changeset_number, 
+            changeset_hash_id, 
+            parent_hashes, 
+            child_hashes, 
+            file_changes, 
+            response_status_code, 
+            changeset_summary_raw_content, 
+            bug_ids_from_summary, 
+            is_backed_out_changeset, 
+            backout_hashes)
 
     except Exception as e:
         print(f"Error: {e}")
@@ -516,6 +530,11 @@ def save_changeset_properties(changeset_hash_id, changeset_properties):
             traceback.print_exc()
             exit()
 
+        except Exception as e:
+            print(f"save_changeset_properties({changeset_hash_id}, changeset_properties): {e}")
+            traceback.print_exc()
+            exit()
+
         finally:
             # Close the cursor and connection if they are not None
             if cursor:
@@ -547,12 +566,13 @@ def get_unprocessed_comment_changeset_records(task_group, start_row, end_row):
                 time.sleep(5)
                 if attempt_number < max_retries:
                     continue
-            print(f"Error - get_unprocessed_comment_changeset_records({task_group}, {start_row}, {end_row}): {e}.")
+            print(f"Error - get_unprocessed_comment_changeset_records({str(task_group)}, {str(start_row)}, {str(end_row)}): {e}.")
+            traceback.print_exc()
             exit()
 
         except Exception as e:
             # Handle any exceptions
-            print(f"Error - get_unprocessed_comment_changeset_records({task_group}, {start_row}, {end_row}): {e}.")
+            print(f"Error - get_unprocessed_comment_changeset_records({str(task_group)}, {str(start_row)}, {str(end_row)}): {e}.")
             traceback.print_exc()
             exit()
 
@@ -594,7 +614,21 @@ def get_bugzilla_mozilla_changesets_by_hash_id(hash_id):
                 WHERE [Hash_Id] = ?
                 ''', (hash_id))
             
-            return namedtuple('ChangesetQueryResult', ['hash_id', 'changeset_summary', 'bug_ids', 'changeset_link', 'mercurial_type', 'changeset_datetime', 'is_backed_out_changeset', 'backed_out_by', 'parent_hashes', 'child_hashes'])(*cursor.fetchone())
+            row = cursor.fetchone()
+            if row:
+                return namedtuple('ChangesetQueryResult', 
+                    ['hash_id',
+                    'changeset_summary', 
+                    'bug_ids', 
+                    'changeset_link', 
+                    'mercurial_type', 
+                    'changeset_datetime', 
+                    'is_backed_out_changeset', 
+                    'backed_out_by', 
+                    'parent_hashes', 
+                    'child_hashes'])(*row)
+            else:
+                return None
     
         except pyodbc.Error as e:
             error_code = e.args[0]
@@ -603,12 +637,13 @@ def get_bugzilla_mozilla_changesets_by_hash_id(hash_id):
                 time.sleep(5)
                 if attempt_number < max_retries:
                     continue
-            print(f"Error - Deadlock.")
+            print(f"pyodbc.Error - get_bugzilla_mozilla_changesets_by_hash_id({hash_id}): {e}.")
+            traceback.print_exc()
             exit()
 
         except Exception as e:
             # Handle any exceptions
-            print(f"Error - Failed DB Access.")
+            print(f"Error - get_bugzilla_mozilla_changesets_by_hash_id({hash_id}): {e}.")
             traceback.print_exc()
             exit()
 
@@ -668,7 +703,9 @@ def save_comment_changeset_properties(process_status, temp_comment_changesets_fo
             updated_q2_hash_id = temp_comment_changesets_for_process.q2_hash_id
             if changeset_properties and changeset_properties.response_status_code == 200:
                 updated_q2_hash_id = changeset_properties.hash_id
-
+            elif existing_bug_mozilla_changeset and existing_bug_mozilla_changeset.hash_id:
+                updated_q2_hash_id = existing_bug_mozilla_changeset.hash_id
+                
             # cursor.execute('''
             #     UPDATE [Temp_Comment_Changesets_For_Process]
             #     SET [Is_Finished_Process] = 1
@@ -829,6 +866,7 @@ def save_comment_changeset_properties(process_status, temp_comment_changesets_fo
                     ([Hash_Id]
                     ,[Changeset_Summary]
                     ,[Bug_Ids]
+                    ,[Changeset_Link] --> '' (*empty string*)
                     ,[Mercurial_Type]
                     ,[Changeset_Datetime]
                     ,[Is_Backed_Out_Changeset]
@@ -836,11 +874,11 @@ def save_comment_changeset_properties(process_status, temp_comment_changesets_fo
                     ,[Backout_Hashes]
                     ,[Parent_Hashes]
                     ,[Child_Hashes]
-                    ,[Inserted_On] -- SYSUTCDATETIME()
-                    ,[Task_Group] -- NULL
+                    ,[Inserted_On] --> SYSUTCDATETIME()
+                    ,[Task_Group] --> NULL
                     ,[Modified_On]) 
                 VALUES
-                    (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, SYSUTCDATETIME(), NULL, SYSUTCDATETIME());
+                    (?, ?, ?, '', ?, ?, ?, ?, ?, ?, ?, SYSUTCDATETIME(), NULL, SYSUTCDATETIME());
                 '''
                 params.extend([
                     changeset_properties.hash_id, # Hash_Id
@@ -901,12 +939,13 @@ def save_comment_changeset_properties(process_status, temp_comment_changesets_fo
                 if attempt_number < max_retries:
                     continue
 
-            print(f"Error - Pyodbc Error.")
+            print(f"Error - save_comment_changeset_properties(process_status, temp_comment_changesets_for_process, changeset_properties, existing_bug_mozilla_changeset): {e}")
+            traceback.print_exc()
             exit()
 
         except Exception as e:
             # Handle any exceptions
-            print(f"Error.")
+            print(f"Error - save_comment_changeset_properties(process_status, temp_comment_changesets_for_process, changeset_properties, existing_bug_mozilla_changeset): {e}")
             traceback.print_exc()
             exit() 
 
@@ -981,7 +1020,7 @@ def start_scraper(task_group, start_row, end_row, scraper_type):
             record_count = len(records)
 
             prev_temp_comment_changesets_for_process = None
-            prev_changeset_saved_info = None
+            prev_changeset_properties = None
 
             for i in range(record_count):
                 # Define and Convert the record to namedtuple
@@ -991,23 +1030,33 @@ def start_scraper(task_group, start_row, end_row, scraper_type):
                 changeset_properties = None
                 print(f"[{strftime('%m/%d/%Y %H:%M:%S', localtime())}] Remainings: {str(record_count)}. Process row number {temp_comment_changesets_for_process.row_num}...", end="", flush=True)
 
-                # Get record of bugzilla_changeset by q2 hash id.
-                existing_bug_mozilla_changeset = get_bugzilla_mozilla_changesets_by_hash_id(temp_comment_changesets_for_process.q2_hash_id)
-
+                lookup_hash_id = temp_comment_changesets_for_process.q2_hash_id
+                
                 # Case when the row_num is same as previous:
                 # How: (1) multiple `Bugzilla_ID` (row_num: 79190) - A changeset link found in multiple bugzilla pages.
                 if prev_temp_comment_changesets_for_process and (temp_comment_changesets_for_process.row_num == prev_temp_comment_changesets_for_process.row_num):
                     # Check the bug ids from the previous processed changeset to see if they are found in the title or not. If not in title, we can save this bug id for the current processed record.
-                    #if prev_changeset_saved_info and 
-                    # TODO: Quoc - Finish this after the other cases.
                     process_status = "Skipped: Dup q1.row_num"
+                    # Assuming that the current 'temp_comment_changesets_for_process' record has similar changeset than previous one:
+                    if prev_changeset_properties and prev_changeset_properties.hash_id and not temp_comment_changesets_for_process.q2_hash_id:
+                        lookup_hash_id = prev_changeset_properties.hash_id
                 
                 # Cases when current hash id is same as previous hash id (which means it has been processed):
                 # How: multiple `q2_mercurial_type` and/or `Bugzilla_ID`
                 elif prev_temp_comment_changesets_for_process and (prev_temp_comment_changesets_for_process.q1_hash_id.startswith(temp_comment_changesets_for_process.q1_hash_id) or temp_comment_changesets_for_process.q1_hash_id.startswith(prev_temp_comment_changesets_for_process.q1_hash_id)):
                     # TODO: Quoc - Finish this after the other cases.
                     process_status = "Skipped: Dup q1_hash_id"
-                
+                    # Assuming that the current 'temp_comment_changesets_for_process' record has similar changeset than previous one:
+                    if prev_changeset_properties and prev_changeset_properties.hash_id and not temp_comment_changesets_for_process.q2_hash_id:
+                        lookup_hash_id = prev_changeset_properties.hash_id
+
+
+                # Get record of bugzilla_changeset by q2 hash id.
+                existing_bug_mozilla_changeset = get_bugzilla_mozilla_changesets_by_hash_id(lookup_hash_id)
+
+
+                if process_status != 'Unknown':
+                    pass  # Do nothing
                 elif existing_bug_mozilla_changeset:
                     process_status = "Already Processed"
 
@@ -1020,7 +1069,7 @@ def start_scraper(task_group, start_row, end_row, scraper_type):
                     changeset_properties = get_changeset_properties_rev(temp_comment_changesets_for_process.q1_full_link)
 
                     # Just to be safe, make another call to get 'bugzilla_mozilla_changesets' but 'changeset_properties.hash_id' in case q2.hash_id incorrect:
-                    if changeset_properties.response_status_code == 200:
+                    if changeset_properties.response_status_code == 200 and not existing_bug_mozilla_changeset:
                         existing_bug_mozilla_changeset = get_bugzilla_mozilla_changesets_by_hash_id(changeset_properties.hash_id)
 
                     # Determine the process_status for processed changeset:
@@ -1040,6 +1089,7 @@ def start_scraper(task_group, start_row, end_row, scraper_type):
 
                 # Update previous record
                 prev_temp_comment_changesets_for_process = temp_comment_changesets_for_process
+                prev_changeset_properties = changeset_properties
 
                 print("Done")
                 record_count = record_count - 1
@@ -1049,19 +1099,19 @@ def start_scraper(task_group, start_row, end_row, scraper_type):
 ##################################################################################################### 
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="")
-    parser.add_argument('arg_1', type=int, help='Argument 1')
-    parser.add_argument('arg_2', type=int, help='Arg ument 2')
-    parser.add_argument('arg_3', type=int, help='Argument 3')
-    parser_args = parser.parse_args()
-    task_group = parser_args.arg_1
-    start_row = parser_args.arg_2
-    end_row = parser_args.arg_3
+    # parser = argparse.ArgumentParser(description="")
+    # parser.add_argument('arg_1', type=int, help='Argument 1')
+    # parser.add_argument('arg_2', type=int, help='Arg ument 2')
+    # parser.add_argument('arg_3', type=int, help='Argument 3')
+    # parser_args = parser.parse_args()
+    # task_group = parser_args.arg_1
+    # start_row = parser_args.arg_2
+    # end_row = parser_args.arg_3
 
     # Testing specific input arguments:
-    # task_group = 1   # Task group
-    # start_row = 98304   # Start row
-    # end_row = 98309   # End row
+    task_group = 1   # Task group
+    start_row = 41   # Start row
+    end_row = 42   # End row
     
     start_scraper(task_group, start_row, end_row, 'Changesets_From_Comments')
 
