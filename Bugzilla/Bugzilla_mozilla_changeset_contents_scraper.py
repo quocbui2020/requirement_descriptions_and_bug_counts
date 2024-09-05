@@ -268,8 +268,9 @@ def obtain_changeset_properties_raw_rev(changeset_link):
 # get_changeset_properties_rev: scrapping the changeset properties from the rev version: (backed_out_by, changeset_datetime, parent_hashes, child_hashes, file_changes)
 def get_changeset_properties_rev(request_url):
     attempt_number = 1
-    max_retries = 20 # if we attempt to make web request 20 times, I think it's safe to stop re-trying.
+    max_retries = 5 # if we attempt to make web request 20 times, I think it's safe to stop re-trying.
     response_status_code = 0
+    response = None
     try:
         while attempt_number <= max_retries:
             try:
@@ -279,6 +280,7 @@ def get_changeset_properties_rev(request_url):
                 print(f"Failed request connection.\nRetrying in 10 seconds...", end="", flush=True)
                 time.sleep(10)
                 attempt_number += 1
+                response = None
                 continue
 
             response_status_code = response.status_code
@@ -294,7 +296,11 @@ def get_changeset_properties_rev(request_url):
                 print(f"Too many failed request attempts. Request url: {request_url}. Exit program.")
                 return None
         
-        content = response.text
+        if response:
+            content = response.text
+        else:
+            content = None
+            response_status_code = -1
 
         file_changes = []
         backed_out_by = ''
@@ -311,7 +317,7 @@ def get_changeset_properties_rev(request_url):
         ChangesetProperties = namedtuple('ChangesetProperties', ['backed_out_by', 'changeset_datetime', 'changeset_number', 'hash_id', 'parent_hashes', 'child_hashes', 'file_changes', 'response_status_code', 'changeset_summary_raw_content', 'bug_ids_from_summary', 'is_backed_out_changeset', 'backout_hashes'])
         # returnResult = ChangesetProperties(backed_out_by, changeset_datetime, changeset_number, changeset_hash_id, parent_hashes, child_hashes, file_changes, response_status_code, changeset_summary_raw_content, bug_ids_from_summary, is_backed_out_changeset, backout_hashes)
 
-        if response_status_code == 404:
+        if response_status_code == 404 or response_status_code == -1:
             return ChangesetProperties(backed_out_by, changeset_datetime, changeset_number, changeset_hash_id, parent_hashes, child_hashes, file_changes, response_status_code, changeset_summary_raw_content, bug_ids_from_summary, is_backed_out_changeset, backout_hashes)
 
         # Split the content
@@ -742,6 +748,8 @@ def save_comment_changeset_properties(process_status, temp_comment_changesets_fo
                     is_valid_link = 1
                 else:
                     full_hash_id = changeset_properties.hash_id
+            elif process_status == "Failed Url - Human Intervention":
+                is_valid_link = 0
 
             # cursor.execute('''
             #     UPDATE [Bugzilla_Mozilla_Comment_Changeset_Links]
@@ -1074,6 +1082,8 @@ def start_scraper(task_group, start_row, end_row, scraper_type):
                     # Determine the process_status for processed changeset:
                     if changeset_properties.response_status_code == 404:
                         process_status = "Processed: 404"
+                    elif changeset_properties.response_status_code == -1:
+                        process_status = "Failed Url - Human Intervention"
                     elif (not changeset_properties.bug_ids_from_summary or changeset_properties.bug_ids_from_summary == '') and (not temp_comment_changesets_for_process.q2_bug_ids or temp_comment_changesets_for_process.q2_bug_ids == ''):
                         process_status = "Processed: No Bug Ids in Changeset Title"
                     elif changeset_properties.backed_out_by:
@@ -1099,19 +1109,19 @@ def start_scraper(task_group, start_row, end_row, scraper_type):
 ##################################################################################################### 
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="")
-    parser.add_argument('arg_1', type=int, help='Argument 1')
-    parser.add_argument('arg_2', type=int, help='Arg ument 2')
-    parser.add_argument('arg_3', type=int, help='Argument 3')
-    parser_args = parser.parse_args()
-    task_group = parser_args.arg_1
-    start_row = parser_args.arg_2
-    end_row = parser_args.arg_3
+    # parser = argparse.ArgumentParser(description="")
+    # parser.add_argument('arg_1', type=int, help='Argument 1')
+    # parser.add_argument('arg_2', type=int, help='Arg ument 2')
+    # parser.add_argument('arg_3', type=int, help='Argument 3')
+    # parser_args = parser.parse_args()
+    # task_group = parser_args.arg_1
+    # start_row = parser_args.arg_2
+    # end_row = parser_args.arg_3
 
     # Testing specific input arguments:
-    # task_group = 1   # Task group
-    # start_row = 41   # Start row
-    # end_row = 42   # End row
+    task_group = 1   # Task group
+    start_row = 6193   # Start row
+    end_row = 6194   # End row
     
     start_scraper(task_group, start_row, end_row, 'Changesets_From_Comments')
 
