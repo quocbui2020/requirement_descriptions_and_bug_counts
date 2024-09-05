@@ -1044,7 +1044,6 @@ def start_scraper(task_group, start_row, end_row, scraper_type):
                 # Cases when current hash id is same as previous hash id (which means it has been processed):
                 # How: multiple `q2_mercurial_type` and/or `Bugzilla_ID`
                 elif prev_temp_comment_changesets_for_process and (prev_temp_comment_changesets_for_process.q1_hash_id.startswith(temp_comment_changesets_for_process.q1_hash_id) or temp_comment_changesets_for_process.q1_hash_id.startswith(prev_temp_comment_changesets_for_process.q1_hash_id)):
-                    # TODO: Quoc - Finish this after the other cases.
                     process_status = "Skipped: Dup q1_hash_id"
                     # Assuming that the current 'temp_comment_changesets_for_process' record has similar changeset than previous one:
                     if prev_changeset_properties and prev_changeset_properties.hash_id and not temp_comment_changesets_for_process.q2_hash_id:
@@ -1099,19 +1098,19 @@ def start_scraper(task_group, start_row, end_row, scraper_type):
 ##################################################################################################### 
 
 if __name__ == "__main__":
-    # parser = argparse.ArgumentParser(description="")
-    # parser.add_argument('arg_1', type=int, help='Argument 1')
-    # parser.add_argument('arg_2', type=int, help='Arg ument 2')
-    # parser.add_argument('arg_3', type=int, help='Argument 3')
-    # parser_args = parser.parse_args()
-    # task_group = parser_args.arg_1
-    # start_row = parser_args.arg_2
-    # end_row = parser_args.arg_3
+    parser = argparse.ArgumentParser(description="")
+    parser.add_argument('arg_1', type=int, help='Argument 1')
+    parser.add_argument('arg_2', type=int, help='Arg ument 2')
+    parser.add_argument('arg_3', type=int, help='Argument 3')
+    parser_args = parser.parse_args()
+    task_group = parser_args.arg_1
+    start_row = parser_args.arg_2
+    end_row = parser_args.arg_3
 
     # Testing specific input arguments:
-    task_group = 1   # Task group
-    start_row = 41   # Start row
-    end_row = 42   # End row
+    # task_group = 1   # Task group
+    # start_row = 41   # Start row
+    # end_row = 42   # End row
     
     start_scraper(task_group, start_row, end_row, 'Changesets_From_Comments')
 
