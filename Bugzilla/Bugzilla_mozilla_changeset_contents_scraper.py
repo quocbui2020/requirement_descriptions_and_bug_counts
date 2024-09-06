@@ -65,9 +65,9 @@ get_unprocessed_comment_changesets_query = '''
         ,[ID] --unique identifier
     FROM [Temp_Comment_Changesets_For_Process]
     WHERE [Process_Status] IS NULL
-    AND [Task_Group] BETWEEN ? AND ?
+    AND [Task_Group] = ?
     AND [Row_Num] BETWEEN ? AND ?
-    ORDER BY [Task_Group] ASC, [Row_Num] ASC, [Q1_Hash_ID] ASC; 
+    ORDER BY [Row_Num] ASC, [Q1_Hash_ID] ASC; 
 '''
 
 save_changeset_parent_child_hashes_query = '''
@@ -268,7 +268,7 @@ def obtain_changeset_properties_raw_rev(changeset_link):
 # get_changeset_properties_rev: scrapping the changeset properties from the rev version: (backed_out_by, changeset_datetime, parent_hashes, child_hashes, file_changes)
 def get_changeset_properties_rev(request_url):
     attempt_number = 1
-    max_retries = 5 # if we attempt to make web request 20 times, I think it's safe to stop re-trying.
+    max_retries = 20 # if we attempt to make web request 20 times, I think it's safe to stop re-trying.
     response_status_code = 0
     response = None
     try:
@@ -551,7 +551,7 @@ def save_changeset_properties(changeset_hash_id, changeset_properties):
         print("\nFailed after maximum retry attempts due to deadlock.")
         exit()
 
-def get_unprocessed_comment_changeset_records(task_group_start, task_group_end, start_row, end_row):
+def get_unprocessed_comment_changeset_records(task_group, start_row, end_row):
     global conn_str, get_unprocessed_comment_changesets_query
     attempt_number = 1
     max_retries = 999 # max retry for deadlock issue.
@@ -561,7 +561,7 @@ def get_unprocessed_comment_changeset_records(task_group_start, task_group_end, 
             conn = pyodbc.connect(conn_str)
             cursor = conn.cursor()
 
-            cursor.execute(get_unprocessed_comment_changesets_query, (task_group_start, task_group_end, start_row, end_row))
+            cursor.execute(get_unprocessed_comment_changesets_query, (task_group, start_row, end_row))
             rows = cursor.fetchall()
             return rows
         
@@ -1047,6 +1047,7 @@ def start_scraper(task_group, start_row, end_row, scraper_type):
             prev_temp_comment_changesets_for_process = None
             prev_changeset_properties = None
             remaining_records = total_records
+
             for i in range(total_records):
                 # While True gives us ability to re-do the iteration. Found that something the data weren't being saved to the db correctly. For such cases, re-do it.
                 re_run_iteration_count = 1
@@ -1095,7 +1096,7 @@ def start_scraper(task_group, start_row, end_row, scraper_type):
                         # Make web request to get changeset properties:
                         changeset_properties = get_changeset_properties_rev(temp_comment_changesets_for_process.q1_full_link)
 
-                        # Just to be safe, make another call to get 'bugzilla_mozilla_changesets' but 'changeset_properties.hash_id' in case q2.hash_id incorrect:
+                        # Just to be safe, make another call to retrieve 'bugzilla_mozilla_changesets' from db for current record in case q2.hash_id has incorrect mapping:
                         if changeset_properties.response_status_code == 200 and not existing_bug_mozilla_changeset:
                             existing_bug_mozilla_changeset = get_bugzilla_mozilla_changesets_by_hash_id(changeset_properties.hash_id)
 
@@ -1127,12 +1128,12 @@ def start_scraper(task_group, start_row, end_row, scraper_type):
                         remaining_records = total_records - i - 1
                         re_run_iteration_count = 1
                         
-                        break;
+                        break
                     else:
                         time.sleep(3)
                         print(f"Record didn't save to database, Re-do it. Attempt: {re_run_iteration_count}/5")
                         re_run_iteration_count = re_run_iteration_count + 1
-                        continue;
+                        continue
 
 
 
@@ -1141,15 +1142,15 @@ def start_scraper(task_group, start_row, end_row, scraper_type):
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="")
     parser.add_argument('arg_1', type=int, help='Argument 1')
-    parser.add_argument('arg_2', type=int, help='Arg ument 2')
-    parser.add_argument('arg_3', type=int, help='Argument 3')
+    parser.add_argument('arg_2', type=int, help='Arg ument 3')
+    parser.add_argument('arg_3', type=int, help='Argument 4')
     parser_args = parser.parse_args()
     task_group = parser_args.arg_1
     start_row = parser_args.arg_2
     end_row = parser_args.arg_3
 
     # Testing specific input arguments:
-    # task_group = 1   # Task group
+    # task_group_start = 1   # Task group
     # start_row = 0   # Start row
     # end_row = 12500   # End row
     
