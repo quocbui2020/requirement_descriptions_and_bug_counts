@@ -1051,6 +1051,7 @@ def start_scraper(task_group, start_row, end_row, scraper_type):
             for i in range(total_records):
                 # While True gives us ability to re-do the iteration. Found that something the data weren't being saved to the db correctly. For such cases, re-do it.
                 re_run_iteration_count = 1
+                keep_web_changeset_properties = None
                 while re_run_iteration_count <= 5:
                     # Define and Convert the record to namedtuple
                     namedtuple_type = namedtuple('Record', field_names)
@@ -1093,8 +1094,12 @@ def start_scraper(task_group, start_row, end_row, scraper_type):
                     # Handle: (1) When hash id is a changeset number.
                     # Goal: we don't want to scrap the changeset link again if it has been done.
                     elif not temp_comment_changesets_for_process.q2_parent_hashes and (temp_comment_changesets_for_process.q2_is_backed_out_changeset == False or temp_comment_changesets_for_process.q2_backed_out_by == None or temp_comment_changesets_for_process.q2_backed_out_by == ''):
-                        # Make web request to get changeset properties:
-                        changeset_properties = get_changeset_properties_rev(temp_comment_changesets_for_process.q1_full_link)
+                        
+                        # Retrieve changeset properties from web request:
+                        if re_run_iteration_count > 1 and keep_web_changeset_properties:
+                            changeset_properties = keep_web_changeset_properties
+                        else:
+                            changeset_properties = get_changeset_properties_rev(temp_comment_changesets_for_process.q1_full_link)
 
                         # Just to be safe, make another call to retrieve 'bugzilla_mozilla_changesets' from db for current record in case q2.hash_id has incorrect mapping:
                         if changeset_properties.response_status_code == 200 and not existing_bug_mozilla_changeset:
@@ -1127,12 +1132,16 @@ def start_scraper(task_group, start_row, end_row, scraper_type):
                         print(f"{process_status}")
                         remaining_records = total_records - i - 1
                         re_run_iteration_count = 1
-                        
+                        keep_web_changeset_properties = None
                         break
                     else:
                         time.sleep(3)
                         print(f"Record didn't save to database, Re-do it. Attempt: {re_run_iteration_count}/5")
                         re_run_iteration_count = re_run_iteration_count + 1
+
+                        # Keep the changeset properties so we don't make to make another web request if data didn't save to db correctly.
+                        if changeset_properties and changeset_properties.hash_id:
+                            keep_web_changeset_properties = changeset_properties
                         continue
 
 
