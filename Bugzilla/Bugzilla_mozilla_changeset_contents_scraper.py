@@ -1136,13 +1136,12 @@ def start_scraper(task_group, start_row, end_row, scraper_type):
                         continue
 
 
-
 ##################################################################################################### 
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="")
     parser.add_argument('arg_1', type=int, help='Argument 1')
-    parser.add_argument('arg_2', type=int, help='Arg ument 2')
+    parser.add_argument('arg_2', type=int, help='Argument 2')
     parser.add_argument('arg_3', type=int, help='Argument 3')
     parser_args = parser.parse_args()
     task_group = parser_args.arg_1
