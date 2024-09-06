@@ -4,13 +4,10 @@ import time
 import requests
 import re
 import pyodbc
-import logging
 import argparse
 from time import strftime, localtime
-from logging import info
 from datetime import datetime
 from collections import namedtuple
-from bs4 import BeautifulSoup
 
 # Connection string
 conn_str = 'DRIVER={ODBC Driver 18 for SQL Server};' \
@@ -296,9 +293,11 @@ def get_changeset_properties_rev(request_url):
                 print(f"Too many failed request attempts. Request url: {request_url}. Exit program.")
                 return None
         
-        if response:
+        if response_status_code and response_status_code == 404:
+            content = None
+        elif response:
             content = response.text
-        elif response_status_code and response_status_code != 404:
+        else: # Case when we have bad url or typos in url (Web server not found)
             content = None
             response_status_code = -1
 
@@ -766,14 +765,6 @@ def save_comment_changeset_properties(process_status, temp_comment_changesets_fo
             elif existing_bug_mozilla_changeset and existing_bug_mozilla_changeset.hash_id:
                 updated_q2_hash_id = existing_bug_mozilla_changeset.hash_id
                 
-            # cursor.execute('''
-            #     UPDATE [Temp_Comment_Changesets_For_Process]
-            #     SET [Is_Finished_Process] = 1
-            #         ,[Process_Status] = ?
-            #         ,[Q2_Hash_Id] = ?
-            #     WHERE [ID] = ?
-            #     ''', (process_status, updated_q2_hash_id, temp_comment_changesets_for_process.id))
-
             query_count += 1
             save_comment_changeset_properties_queries += '''
                 UPDATE [Temp_Comment_Changesets_For_Process]
@@ -797,13 +788,14 @@ def save_comment_changeset_properties(process_status, temp_comment_changesets_fo
             is_valid_link = 1
             full_hash_id = temp_comment_changesets_for_process.q1_hash_id
 
-            if changeset_properties:
+            if process_status == "Processed: 404" or process_status == "Failed Url - Human Intervention":
+                is_valid_link = 0
+            elif changeset_properties:
                 if changeset_properties.response_status_code != 200:
                     is_valid_link = 1
                 else:
                     full_hash_id = changeset_properties.hash_id
-            elif process_status == "Failed Url - Human Intervention":
-                is_valid_link = 0
+            
 
             # cursor.execute('''
             #     UPDATE [Bugzilla_Mozilla_Comment_Changeset_Links]
@@ -823,7 +815,7 @@ def save_comment_changeset_properties(process_status, temp_comment_changesets_fo
                 '''
             params.extend([full_hash_id, is_valid_link, temp_comment_changesets_for_process.q1_id])
 
-            if changeset_properties and changeset_properties.response_status_code != 200:
+            if process_status == "Processed: 404" or process_status == "Failed Url - Human Intervention" or (changeset_properties and changeset_properties.response_status_code != 200):
                 # conn.commit() # Quoc: For testing in the development, I commented this out.
                 cursor.execute("BEGIN TRANSACTION")
                 cursor.execute(save_comment_changeset_properties_queries, params)
@@ -1136,7 +1128,7 @@ def start_scraper(task_group, start_row, end_row, scraper_type):
                         break
                     else:
                         time.sleep(3)
-                        print(f"Record didn't save to database, Re-do it. Attempt: {re_run_iteration_count}/5")
+                        print(f"Data wasn't saved to database, Re-do it. Attempt: {re_run_iteration_count}/5")
                         re_run_iteration_count = re_run_iteration_count + 1
 
                         # Keep the changeset properties so we don't make to make another web request if data didn't save to db correctly.
