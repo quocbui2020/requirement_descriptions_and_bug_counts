@@ -881,7 +881,7 @@ def save_comment_changeset_properties(process_status, temp_comment_changesets_fo
                     WHERE [Hash_ID] = ?;
                     '''
                 params.extend([bug_ids_list_to_be_saved_string, mercurial_type_list_string, existing_bug_mozilla_changeset.hash_id])
-            else:
+            elif changeset_properties:
                 query_count += 1
                 save_comment_changeset_properties_queries += '''
                 INSERT INTO [dbo].[Bugzilla_Mozilla_Changesets]
@@ -971,7 +971,7 @@ def save_comment_changeset_properties(process_status, temp_comment_changesets_fo
             # Handle any exceptions
             cursor.execute("ROLLBACK TRANSACTION")  # Rollback transaction
             conn.rollback()  # Ensure the rollback is completed
-            
+
             print(f"Error - save_comment_changeset_properties(process_status, temp_comment_changesets_for_process, changeset_properties, existing_bug_mozilla_changeset): {e}")
             traceback.print_exc()
             exit() 

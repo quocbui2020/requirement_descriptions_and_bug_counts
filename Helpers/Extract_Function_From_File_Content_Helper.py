@@ -201,7 +201,7 @@ class ExtractFunctionFromFileContentHelper:
         return
     def extract_c_functions(content):
         list_of_c_functions = []
-        #TODO: finished it
+        #TODO: finished it. Copy over the code from FFmpeg project.
 
         return list_of_c_functions
 
@@ -220,7 +220,7 @@ class ExtractFunctionFromFileContentHelper:
 
 ##########################################
 ##########################################
-# Testing area
+# Testing area/Unit Tests:
 if __name__ == '__main__':
     response = requests.get(f"https://hg.mozilla.org/mozilla-central/raw-file/000b7732d8f0996ab5c8e55a98514d592e9391d5/testing/web-platform/harness/wptrunner/browsers/firefox.py")
     full_py_testing_content = '''
