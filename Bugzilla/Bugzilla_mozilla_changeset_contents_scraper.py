@@ -523,7 +523,9 @@ def save_changeset_properties(changeset_hash_id, changeset_properties):
 
         except pyodbc.Error as e:
             error_code = e.args[0]
-            cursor.execute("ROLLBACK TRANSACTION")  # Rollback to the beginning of the transaction
+            cursor.execute("ROLLBACK TRANSACTION")  # Rollback transaction
+            conn.rollback()  # Ensure the rollback is completed
+
             if error_code in ['40001', '40P01']:  # Deadlock error codes
                 attempt_number += 1
                 print(f"Deadlock.\nAttempt number: {attempt_number}. Retrying in 5 seconds...", end="", flush=True)
@@ -536,6 +538,9 @@ def save_changeset_properties(changeset_hash_id, changeset_properties):
             exit()
 
         except Exception as e:
+            cursor.execute("ROLLBACK TRANSACTION")  # Rollback transaction
+            conn.rollback()  # Ensure the rollback is completed
+
             print(f"save_changeset_properties({changeset_hash_id}, changeset_properties): {e}")
             traceback.print_exc()
             exit()
@@ -948,7 +953,9 @@ def save_comment_changeset_properties(process_status, temp_comment_changesets_fo
 
         except pyodbc.Error as e:
             error_code = e.args[0]
-            cursor.execute("ROLLBACK TRANSACTION")  # Rollback to the beginning of the transaction
+            cursor.execute("ROLLBACK TRANSACTION")  # Rollback transaction
+            conn.rollback()  # Ensure the rollback is completed
+
             if error_code in ['40001', '40P01']:  # Deadlock error codes
                 attempt_number += 1
                 print(f"Deadlock.\nAttempt number: {attempt_number}. Retrying in 5 seconds...", end="", flush=True)
@@ -962,6 +969,9 @@ def save_comment_changeset_properties(process_status, temp_comment_changesets_fo
 
         except Exception as e:
             # Handle any exceptions
+            cursor.execute("ROLLBACK TRANSACTION")  # Rollback transaction
+            conn.rollback()  # Ensure the rollback is completed
+            
             print(f"Error - save_comment_changeset_properties(process_status, temp_comment_changesets_for_process, changeset_properties, existing_bug_mozilla_changeset): {e}")
             traceback.print_exc()
             exit() 
