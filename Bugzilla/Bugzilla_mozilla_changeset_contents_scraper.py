@@ -1,4 +1,3 @@
-# https://dbdiagram.io/d/66bc97af8b4bb5230e1968f4
 import traceback
 import time
 import requests
