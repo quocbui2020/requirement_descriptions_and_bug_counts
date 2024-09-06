@@ -4,13 +4,10 @@ import time
 import requests
 import re
 import pyodbc
-import logging
 import argparse
 from time import strftime, localtime
-from logging import info
 from datetime import datetime
 from collections import namedtuple
-from bs4 import BeautifulSoup
 
 # Connection string
 conn_str = 'DRIVER={ODBC Driver 18 for SQL Server};' \
@@ -277,9 +274,9 @@ def get_changeset_properties_rev(request_url):
                 # request_url = 'https://hg.mozilla.org/mozilla-central/rev/00002cc231f4' # Quoc: This is a test url
                 response = requests.get(request_url)
             except requests.exceptions.RequestException as e: # Handle case when the request connection failed
-                print(f"Failed request connection.\nRetrying in 10 seconds...", end="", flush=True)
-                time.sleep(10)
                 attempt_number += 1
+                print(f"Failed request connection.\n Attempt {str(attempt_number)}/{str(max_retries)}. Retrying in 10 seconds...", end="", flush=True)
+                time.sleep(10)
                 response = None
                 continue
 
@@ -296,10 +293,13 @@ def get_changeset_properties_rev(request_url):
                 print(f"Too many failed request attempts. Request url: {request_url}. Exit program.")
                 return None
         
-        if response:
-            content = response.text
-        elif response_status_code and response_status_code != 404:
-            content = None
+        response_content = None
+        if response_status_code and response_status_code == 404:
+            response_content = None
+        elif response:
+            response_content = response.text
+        else: # Case when we have bad url or typos in url (Web server not found)
+            response_content = None
             response_status_code = -1
 
         file_changes = []
@@ -317,11 +317,11 @@ def get_changeset_properties_rev(request_url):
         ChangesetProperties = namedtuple('ChangesetProperties', ['backed_out_by', 'changeset_datetime', 'changeset_number', 'hash_id', 'parent_hashes', 'child_hashes', 'file_changes', 'response_status_code', 'changeset_summary_raw_content', 'bug_ids_from_summary', 'is_backed_out_changeset', 'backout_hashes'])
         # returnResult = ChangesetProperties(backed_out_by, changeset_datetime, changeset_number, changeset_hash_id, parent_hashes, child_hashes, file_changes, response_status_code, changeset_summary_raw_content, bug_ids_from_summary, is_backed_out_changeset, backout_hashes)
 
-        if response_status_code == 404 or response_status_code == -1:
+        if response_status_code == 404 or response_status_code == -1 or not response_content:
             return ChangesetProperties(backed_out_by, changeset_datetime, changeset_number, changeset_hash_id, parent_hashes, child_hashes, file_changes, response_status_code, changeset_summary_raw_content, bug_ids_from_summary, is_backed_out_changeset, backout_hashes)
 
         # Split the content
-        diff_blocks = content.split(".1\"></a><span id=\"l")
+        diff_blocks = response_content.split(".1\"></a><span id=\"l")
 
         # Extract changeset number and changeset hash id:
         changeset_hash_id_match = re.search(r'<title>.+changeset\s(\d+):([0-9a-f]+)<\/title>', diff_blocks[0])
@@ -766,14 +766,6 @@ def save_comment_changeset_properties(process_status, temp_comment_changesets_fo
             elif existing_bug_mozilla_changeset and existing_bug_mozilla_changeset.hash_id:
                 updated_q2_hash_id = existing_bug_mozilla_changeset.hash_id
                 
-            # cursor.execute('''
-            #     UPDATE [Temp_Comment_Changesets_For_Process]
-            #     SET [Is_Finished_Process] = 1
-            #         ,[Process_Status] = ?
-            #         ,[Q2_Hash_Id] = ?
-            #     WHERE [ID] = ?
-            #     ''', (process_status, updated_q2_hash_id, temp_comment_changesets_for_process.id))
-
             query_count += 1
             save_comment_changeset_properties_queries += '''
                 UPDATE [Temp_Comment_Changesets_For_Process]
@@ -797,13 +789,14 @@ def save_comment_changeset_properties(process_status, temp_comment_changesets_fo
             is_valid_link = 1
             full_hash_id = temp_comment_changesets_for_process.q1_hash_id
 
-            if changeset_properties:
+            if process_status == "Processed: 404" or process_status == "Failed Url - Human Intervention":
+                is_valid_link = 0
+            elif changeset_properties:
                 if changeset_properties.response_status_code != 200:
-                    is_valid_link = 1
+                    is_valid_link = 0
                 else:
                     full_hash_id = changeset_properties.hash_id
-            elif process_status == "Failed Url - Human Intervention":
-                is_valid_link = 0
+            
 
             # cursor.execute('''
             #     UPDATE [Bugzilla_Mozilla_Comment_Changeset_Links]
@@ -823,8 +816,7 @@ def save_comment_changeset_properties(process_status, temp_comment_changesets_fo
                 '''
             params.extend([full_hash_id, is_valid_link, temp_comment_changesets_for_process.q1_id])
 
-            if changeset_properties and changeset_properties.response_status_code != 200:
-                # conn.commit() # Quoc: For testing in the development, I commented this out.
+            if process_status == "Processed: 404" or process_status == "Failed Url - Human Intervention" or (changeset_properties and changeset_properties.response_status_code != 200):
                 cursor.execute("BEGIN TRANSACTION")
                 cursor.execute(save_comment_changeset_properties_queries, params)
                 cursor.execute("COMMIT")
@@ -1102,7 +1094,7 @@ def start_scraper(task_group, start_row, end_row, scraper_type):
                             changeset_properties = get_changeset_properties_rev(temp_comment_changesets_for_process.q1_full_link)
 
                         # Just to be safe, make another call to retrieve 'bugzilla_mozilla_changesets' from db for current record in case q2.hash_id has incorrect mapping:
-                        if changeset_properties.response_status_code == 200 and not existing_bug_mozilla_changeset:
+                        if changeset_properties and changeset_properties.response_status_code == 200 and not existing_bug_mozilla_changeset:
                             existing_bug_mozilla_changeset = get_bugzilla_mozilla_changesets_by_hash_id(changeset_properties.hash_id)
 
                         # Determine the process_status for processed changeset:
@@ -1119,8 +1111,16 @@ def start_scraper(task_group, start_row, end_row, scraper_type):
                         else:
                             process_status = "Processed"
                     
-                    # save to database:
-                    save_comment_changeset_properties(process_status, temp_comment_changesets_for_process, changeset_properties, existing_bug_mozilla_changeset)
+                    
+                    if changeset_properties or existing_bug_mozilla_changeset:
+                        # save to database:
+                        save_comment_changeset_properties(process_status, temp_comment_changesets_for_process, changeset_properties, existing_bug_mozilla_changeset)
+                    else:
+                        # Case when both changeset_properties and existing_bug_mozilla_changeset are NULL. Still not sure why:
+                        time.sleep(3)
+                        print(f"Both changeset_properties and existing_bug_mozilla_changeset are NULL. Re-do it. Attempt: {re_run_iteration_count}/5")
+                        re_run_iteration_count = re_run_iteration_count + 1
+                        continue
 
                     # Make another call to database to check making sure it's actually done. Found that some cases, the data weren't saved to the db, not sure why:
                     if is_temp_comment_changeset_done(temp_comment_changesets_for_process.id):
@@ -1136,7 +1136,7 @@ def start_scraper(task_group, start_row, end_row, scraper_type):
                         break
                     else:
                         time.sleep(3)
-                        print(f"Record didn't save to database, Re-do it. Attempt: {re_run_iteration_count}/5")
+                        print(f"Data wasn't saved to database, Re-do it. Attempt: {re_run_iteration_count}/5")
                         re_run_iteration_count = re_run_iteration_count + 1
 
                         # Keep the changeset properties so we don't make to make another web request if data didn't save to db correctly.
@@ -1159,8 +1159,8 @@ if __name__ == "__main__":
 
     # Testing specific input arguments:
     # task_group = 2   # Task group
-    # start_row = 0   # Start row
-    # end_row = 12500   # End row
+    # start_row = 77112   # Start row
+    # end_row = 77113   # End row
     
     start_scraper(task_group, start_row, end_row, 'Changesets_From_Comments')
 
