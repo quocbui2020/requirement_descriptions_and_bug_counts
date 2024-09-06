@@ -996,7 +996,7 @@ def start_scraper(task_group, start_row, end_row, scraper_type):
             for record in list_of_records:
                 Row_Num, changeset_hash_Id, Bug_Ids, Changeset_Link, Parent_Hashes = record
 
-                print(f"[{strftime('%m/%d/%Y %H:%M:%S', localtime())}] Remainings: {str(record_count)}. Scraping properties of {changeset_hash_Id}...", end="", flush=True)
+                print(f"[{strftime('%m/%d/%Y %H:%M:%S', localtime())}] Task Group: {str(task_group)}. Remainings: {str(record_count)}. Scraping properties of {changeset_hash_Id}...", end="", flush=True)
 
                 # Iterate through 'Bug_Ids' and check if any of them are 'resolved' bugs. If not, no need to process further
                 list_of_bug_id = Bug_Ids.split(" | ")
@@ -1059,7 +1059,7 @@ def start_scraper(task_group, start_row, end_row, scraper_type):
                     temp_comment_changesets_for_process = namedtuple_type(*records[i]) # namedtuple type
                     process_status = 'Unknown'
                     changeset_properties = None
-                    print(f"[{strftime('%m/%d/%Y %H:%M:%S', localtime())}] Remainings: {str(remaining_records)}. Process row number {temp_comment_changesets_for_process.row_num}...", end="", flush=True)
+                    print(f"[{strftime('%m/%d/%Y %H:%M:%S', localtime())}] Task Group: {str(task_group)}. Remainings: {str(remaining_records)}. Process row number {temp_comment_changesets_for_process.row_num}...", end="", flush=True)
 
                     lookup_hash_id = temp_comment_changesets_for_process.q2_hash_id
                     
@@ -1133,11 +1133,16 @@ def start_scraper(task_group, start_row, end_row, scraper_type):
 
                     # Make another call to database to check making sure it's actually done. Found that some cases, the data weren't saved to the db, not sure why:
                     if is_temp_comment_changeset_done(temp_comment_changesets_for_process.id):
-                        # Update previous record
-                        prev_temp_comment_changesets_for_process = temp_comment_changesets_for_process
-                        if process_status.startswith("Processed"):
-                            prev_changeset_properties = changeset_properties
+                        if not ("404" in process_status):
+                            # Update previous record
+                            prev_temp_comment_changesets_for_process = temp_comment_changesets_for_process
+                            if process_status.startswith("Processed"):
+                                prev_changeset_properties = changeset_properties
 
+                        # If the status code is 404 not found, then we know don't care about the 'changeset_properties':
+                        else:
+                            prev_changeset_properties = None
+                            
                         print(f"{process_status}")
                         remaining_records = total_records - i - 1
                         re_run_iteration_count = 1
