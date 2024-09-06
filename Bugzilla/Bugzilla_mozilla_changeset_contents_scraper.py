@@ -64,10 +64,10 @@ get_unprocessed_comment_changesets_query = '''
         ,[Process_Status]
         ,[ID] --unique identifier
     FROM [Temp_Comment_Changesets_For_Process]
-    WHERE Process_Status is null
-    AND Task_Group = ?
-    AND Row_Num BETWEEN ? AND ?
-    ORDER BY Row_Num ASC, Q1_Hash_ID ASC; 
+    WHERE [Process_Status] IS NULL
+    AND [Task_Group] = ?
+    AND [Row_Num] BETWEEN ? AND ?
+    ORDER BY [Row_Num] ASC, [Q1_Hash_ID] ASC; 
 '''
 
 save_changeset_parent_child_hashes_query = '''
@@ -270,6 +270,7 @@ def get_changeset_properties_rev(request_url):
     attempt_number = 1
     max_retries = 20 # if we attempt to make web request 20 times, I think it's safe to stop re-trying.
     response_status_code = 0
+    response = None
     try:
         while attempt_number <= max_retries:
             try:
@@ -279,6 +280,7 @@ def get_changeset_properties_rev(request_url):
                 print(f"Failed request connection.\nRetrying in 10 seconds...", end="", flush=True)
                 time.sleep(10)
                 attempt_number += 1
+                response = None
                 continue
 
             response_status_code = response.status_code
@@ -294,7 +296,11 @@ def get_changeset_properties_rev(request_url):
                 print(f"Too many failed request attempts. Request url: {request_url}. Exit program.")
                 return None
         
-        content = response.text
+        if response:
+            content = response.text
+        elif response_status_code and response_status_code != 404:
+            content = None
+            response_status_code = -1
 
         file_changes = []
         backed_out_by = ''
@@ -311,7 +317,7 @@ def get_changeset_properties_rev(request_url):
         ChangesetProperties = namedtuple('ChangesetProperties', ['backed_out_by', 'changeset_datetime', 'changeset_number', 'hash_id', 'parent_hashes', 'child_hashes', 'file_changes', 'response_status_code', 'changeset_summary_raw_content', 'bug_ids_from_summary', 'is_backed_out_changeset', 'backout_hashes'])
         # returnResult = ChangesetProperties(backed_out_by, changeset_datetime, changeset_number, changeset_hash_id, parent_hashes, child_hashes, file_changes, response_status_code, changeset_summary_raw_content, bug_ids_from_summary, is_backed_out_changeset, backout_hashes)
 
-        if response_status_code == 404:
+        if response_status_code == 404 or response_status_code == -1:
             return ChangesetProperties(backed_out_by, changeset_datetime, changeset_number, changeset_hash_id, parent_hashes, child_hashes, file_changes, response_status_code, changeset_summary_raw_content, bug_ids_from_summary, is_backed_out_changeset, backout_hashes)
 
         # Split the content
@@ -658,6 +664,60 @@ def get_bugzilla_mozilla_changesets_by_hash_id(hash_id):
         exit()
 
 
+def is_temp_comment_changeset_done(id):
+    if not id:
+        return False
+    
+    global conn_str
+    attempt_number = 1
+    max_retries = 5 # max retry for deadlock issue.
+
+    while attempt_number <= max_retries:
+        try:
+            conn = pyodbc.connect(conn_str)
+            cursor = conn.cursor()
+
+            cursor.execute('''
+                SELECT TOP 1 1
+                FROM [dbo].[Temp_Comment_Changesets_For_Process]
+                WHERE [ID] = ?
+                    AND [Process_Status] IS NOT NULL
+                ''', (id))
+            
+            row = cursor.fetchone()
+            if row:
+                return True
+            else:
+                return False
+    
+        except pyodbc.Error as e:
+            error_code = e.args[0]
+            if error_code in ['40001', '40P01']:  # Deadlock error codes
+                attempt_number += 1
+                time.sleep(5)
+                if attempt_number < max_retries:
+                    continue
+            print(f"pyodbc.Error - is_temp_comment_changeset_done({id}): {e}.")
+            traceback.print_exc()
+            return False
+
+        except Exception as e:
+            # Handle any exceptions
+            print(f"Error - is_temp_comment_changeset_done({id}): {e}.")
+            traceback.print_exc()
+            return False
+
+        finally:
+            # Close the cursor and connection if they are not None
+            if cursor:
+                cursor.close()
+            if conn:
+                conn.close()
+    else:
+        print("\nFailed after maximum retry attempts due to deadlock.")
+        return False
+
+
 # save_comment_changeset_properties: this function saves all the properties of the comment changeset after finished processed:
 # Save the `Bugzilla_Mozilla_Changesets.mercurial_type`, `Bugzilla_Mozilla_Changesets.Is_Processed`, `Bugzilla_Mozilla_Changesets.Bug_Ids` if it is empty (From Bugzilla table)
 def save_comment_changeset_properties(process_status, temp_comment_changesets_for_process, changeset_properties, existing_bug_mozilla_changeset):
@@ -742,6 +802,8 @@ def save_comment_changeset_properties(process_status, temp_comment_changesets_fo
                     is_valid_link = 1
                 else:
                     full_hash_id = changeset_properties.hash_id
+            elif process_status == "Failed Url - Human Intervention":
+                is_valid_link = 0
 
             # cursor.execute('''
             #     UPDATE [Bugzilla_Mozilla_Comment_Changeset_Links]
@@ -814,13 +876,6 @@ def save_comment_changeset_properties(process_status, temp_comment_changesets_fo
             mercurial_type_list_string = " | ".join(mercurial_type_list_to_be_saved)
 
             if existing_bug_mozilla_changeset:
-                # cursor.execute('''
-                #     UPDATE [Bugzilla_Mozilla_Changesets]
-                #     SET [Bug_Ids] = ?
-                #         ,[Mercurial_Type] = ?
-                #     WHERE [Hash_ID] = ?
-                #     ''', (bug_ids_list_to_be_saved_string, mercurial_type_list_string, existing_bug_mozilla_changeset.hash_id))
-                
                 query_count += 1
                 save_comment_changeset_properties_queries += '''
                     UPDATE [Bugzilla_Mozilla_Changesets]
@@ -830,36 +885,7 @@ def save_comment_changeset_properties(process_status, temp_comment_changesets_fo
                     WHERE [Hash_ID] = ?;
                     '''
                 params.extend([bug_ids_list_to_be_saved_string, mercurial_type_list_string, existing_bug_mozilla_changeset.hash_id])
-
             else:
-                # cursor.execute('''
-                # INSERT INTO [dbo].[Bugzilla_Mozilla_Changesets]
-                #     ([Hash_Id]
-                #     ,[Changeset_Summary]
-                #     ,[Bug_Ids]
-                #     ,[Mercurial_Type]
-                #     ,[Changeset_Datetime]
-                #     ,[Is_Backed_Out_Changeset]
-                #     ,[Backed_Out_By]
-                #     ,[Backout_Hashes]
-                #     ,[Parent_Hashes]
-                #     ,[Child_Hashes]
-                #     ,[Inserted_On] -- SYSUTCDATETIME()
-                #     ,[Task_Group]) -- NULL
-                # VALUES
-                #     (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, SYSUTCDATETIME(), NULL)
-                # ''', (changeset_properties.hash_id, # Hash_Id
-                #       changeset_properties.changeset_summary_raw_content, # Changeset_Summary
-                #       bug_ids_list_to_be_saved_string, # Bug_Ids
-                #       mercurial_type_list_string, # Mercurial_Type
-                #       changeset_properties.changeset_datetime, # Changeset_Datetime
-                #       changeset_properties.is_backed_out_changeset, # Is_Backed_Out_Changeset
-                #       changeset_properties.backed_out_by, # Backed_Out_By
-                #       changeset_properties.backout_hashes, # Backout_Hashes
-                #       changeset_properties.parent_hashes, # Parent_Hashes
-                #       changeset_properties.child_hashes # Child_Hashes
-                # ))
-
                 query_count += 1
                 save_comment_changeset_properties_queries += '''
                 INSERT INTO [dbo].[Bugzilla_Mozilla_Changesets]
@@ -1017,83 +1043,106 @@ def start_scraper(task_group, start_row, end_row, scraper_type):
             ]
 
             records = get_unprocessed_comment_changeset_records(task_group, start_row, end_row)
-            record_count = len(records)
-
+            total_records = len(records)
             prev_temp_comment_changesets_for_process = None
             prev_changeset_properties = None
+            remaining_records = total_records
 
-            for i in range(record_count):
-                # Define and Convert the record to namedtuple
-                namedtuple_type = namedtuple('Record', field_names)
-                temp_comment_changesets_for_process = namedtuple_type(*records[i]) # namedtuple type
-                process_status = 'Unknown'
-                changeset_properties = None
-                print(f"[{strftime('%m/%d/%Y %H:%M:%S', localtime())}] Remainings: {str(record_count)}. Process row number {temp_comment_changesets_for_process.row_num}...", end="", flush=True)
+            for i in range(total_records):
+                # While True gives us ability to re-do the iteration. Found that something the data weren't being saved to the db correctly. For such cases, re-do it.
+                re_run_iteration_count = 1
+                keep_web_changeset_properties = None
+                while re_run_iteration_count <= 5:
+                    # Define and Convert the record to namedtuple
+                    namedtuple_type = namedtuple('Record', field_names)
+                    temp_comment_changesets_for_process = namedtuple_type(*records[i]) # namedtuple type
+                    process_status = 'Unknown'
+                    changeset_properties = None
+                    print(f"[{strftime('%m/%d/%Y %H:%M:%S', localtime())}] Remainings: {str(remaining_records)}. Process row number {temp_comment_changesets_for_process.row_num}...", end="", flush=True)
 
-                lookup_hash_id = temp_comment_changesets_for_process.q2_hash_id
-                
-                # Case when the row_num is same as previous:
-                # How: (1) multiple `Bugzilla_ID` (row_num: 79190) - A changeset link found in multiple bugzilla pages.
-                if prev_temp_comment_changesets_for_process and (temp_comment_changesets_for_process.row_num == prev_temp_comment_changesets_for_process.row_num):
-                    # Check the bug ids from the previous processed changeset to see if they are found in the title or not. If not in title, we can save this bug id for the current processed record.
-                    process_status = "Skipped: Dup q1.row_num"
-                    # Assuming that the current 'temp_comment_changesets_for_process' record has similar changeset than previous one:
-                    if prev_changeset_properties and prev_changeset_properties.hash_id and not temp_comment_changesets_for_process.q2_hash_id:
-                        lookup_hash_id = prev_changeset_properties.hash_id
-                
-                # Cases when current hash id is same as previous hash id (which means it has been processed):
-                # How: multiple `q2_mercurial_type` and/or `Bugzilla_ID`
-                elif prev_temp_comment_changesets_for_process and (prev_temp_comment_changesets_for_process.q1_hash_id.startswith(temp_comment_changesets_for_process.q1_hash_id) or temp_comment_changesets_for_process.q1_hash_id.startswith(prev_temp_comment_changesets_for_process.q1_hash_id)):
-                    process_status = "Skipped: Dup q1_hash_id"
-                    # Assuming that the current 'temp_comment_changesets_for_process' record has similar changeset than previous one:
-                    if prev_changeset_properties and prev_changeset_properties.hash_id and not temp_comment_changesets_for_process.q2_hash_id:
-                        lookup_hash_id = prev_changeset_properties.hash_id
+                    lookup_hash_id = temp_comment_changesets_for_process.q2_hash_id
+                    
+                    # Case when the row_num is same as previous:
+                    # How: (1) multiple `Bugzilla_ID` (row_num: 79190) - A changeset link found in multiple bugzilla pages.
+                    if prev_temp_comment_changesets_for_process and (temp_comment_changesets_for_process.row_num == prev_temp_comment_changesets_for_process.row_num):
+                        # Check the bug ids from the previous processed changeset to see if they are found in the title or not. If not in title, we can save this bug id for the current processed record.
+                        process_status = "Skipped: Dup q1.row_num"
+                        # Assuming that the current 'temp_comment_changesets_for_process' record has similar changeset than previous one:
+                        if prev_changeset_properties and prev_changeset_properties.hash_id and not temp_comment_changesets_for_process.q2_hash_id:
+                            lookup_hash_id = prev_changeset_properties.hash_id
+                    
+                    # Cases when current hash id is same as previous hash id (which means it has been processed):
+                    # How: multiple `q2_mercurial_type` and/or `Bugzilla_ID`
+                    elif prev_temp_comment_changesets_for_process and (prev_temp_comment_changesets_for_process.q1_hash_id.startswith(temp_comment_changesets_for_process.q1_hash_id) or temp_comment_changesets_for_process.q1_hash_id.startswith(prev_temp_comment_changesets_for_process.q1_hash_id)):
+                        process_status = "Skipped: Dup q1_hash_id"
+                        # Assuming that the current 'temp_comment_changesets_for_process' record has similar changeset than previous one:
+                        if prev_changeset_properties and prev_changeset_properties.hash_id and not temp_comment_changesets_for_process.q2_hash_id:
+                            lookup_hash_id = prev_changeset_properties.hash_id
 
 
-                # Get record of bugzilla_changeset by q2 hash id.
-                existing_bug_mozilla_changeset = get_bugzilla_mozilla_changesets_by_hash_id(lookup_hash_id)
+                    # Get record of bugzilla_changeset by q2 hash id.
+                    existing_bug_mozilla_changeset = get_bugzilla_mozilla_changesets_by_hash_id(lookup_hash_id)
 
 
-                if process_status != 'Unknown':
-                    pass  # Do nothing
-                elif existing_bug_mozilla_changeset:
-                    process_status = "Already Processed"
+                    if process_status != 'Unknown':
+                        pass  # Do nothing
+                    elif existing_bug_mozilla_changeset:
+                        process_status = "Already Processed"
 
-                # Cases when we want to make a web request to scrap changeset info:
-                # Cover cases: (1) When q2 doesn't exist. (2) When it's not backout related changesets. (3) When bug_id='' (No bug id found in changeset title - We process it if it found in the bug comment).
-                # Handle: (1) When hash id is a changeset number.
-                # Goal: we don't want to scrap the changeset link again if it has been done.
-                elif not temp_comment_changesets_for_process.q2_parent_hashes and (temp_comment_changesets_for_process.q2_is_backed_out_changeset == False or temp_comment_changesets_for_process.q2_backed_out_by == None or temp_comment_changesets_for_process.q2_backed_out_by == ''):
-                    # Make web request to get changeset properties:
-                    changeset_properties = get_changeset_properties_rev(temp_comment_changesets_for_process.q1_full_link)
+                    # Cases when we want to make a web request to scrap changeset info:
+                    # Cover cases: (1) When q2 doesn't exist. (2) When it's not backout related changesets. (3) When bug_id='' (No bug id found in changeset title - We process it if it found in the bug comment).
+                    # Handle: (1) When hash id is a changeset number.
+                    # Goal: we don't want to scrap the changeset link again if it has been done.
+                    elif not temp_comment_changesets_for_process.q2_parent_hashes and (temp_comment_changesets_for_process.q2_is_backed_out_changeset == False or temp_comment_changesets_for_process.q2_backed_out_by == None or temp_comment_changesets_for_process.q2_backed_out_by == ''):
+                        
+                        # Retrieve changeset properties from web request:
+                        if re_run_iteration_count > 1 and keep_web_changeset_properties:
+                            changeset_properties = keep_web_changeset_properties
+                        else:
+                            changeset_properties = get_changeset_properties_rev(temp_comment_changesets_for_process.q1_full_link)
 
-                    # Just to be safe, make another call to get 'bugzilla_mozilla_changesets' but 'changeset_properties.hash_id' in case q2.hash_id incorrect:
-                    if changeset_properties.response_status_code == 200 and not existing_bug_mozilla_changeset:
-                        existing_bug_mozilla_changeset = get_bugzilla_mozilla_changesets_by_hash_id(changeset_properties.hash_id)
+                        # Just to be safe, make another call to retrieve 'bugzilla_mozilla_changesets' from db for current record in case q2.hash_id has incorrect mapping:
+                        if changeset_properties.response_status_code == 200 and not existing_bug_mozilla_changeset:
+                            existing_bug_mozilla_changeset = get_bugzilla_mozilla_changesets_by_hash_id(changeset_properties.hash_id)
 
-                    # Determine the process_status for processed changeset:
-                    if changeset_properties.response_status_code == 404:
-                        process_status = "Processed: 404"
-                    elif (not changeset_properties.bug_ids_from_summary or changeset_properties.bug_ids_from_summary == '') and (not temp_comment_changesets_for_process.q2_bug_ids or temp_comment_changesets_for_process.q2_bug_ids == ''):
-                        process_status = "Processed: No Bug Ids in Changeset Title"
-                    elif changeset_properties.backed_out_by:
-                        process_status = "Processed: Backed Out By" 
-                    elif changeset_properties.is_backed_out_changeset:
-                        process_status = "Processed: Backout Changeset"
+                        # Determine the process_status for processed changeset:
+                        if changeset_properties.response_status_code == 404:
+                            process_status = "Processed: 404"
+                        elif changeset_properties.response_status_code == -1:
+                            process_status = "Failed Url - Human Intervention"
+                        elif (not changeset_properties.bug_ids_from_summary or changeset_properties.bug_ids_from_summary == '') and (not temp_comment_changesets_for_process.q2_bug_ids or temp_comment_changesets_for_process.q2_bug_ids == ''):
+                            process_status = "Processed: No Bug Ids in Changeset Title"
+                        elif changeset_properties.backed_out_by:
+                            process_status = "Processed: Backed Out By" 
+                        elif changeset_properties.is_backed_out_changeset:
+                            process_status = "Processed: Backout Changeset"
+                        else:
+                            process_status = "Processed"
+                    
+                    # save to database:
+                    save_comment_changeset_properties(process_status, temp_comment_changesets_for_process, changeset_properties, existing_bug_mozilla_changeset)
+
+                    # Make another call to database to check making sure it's actually done. Found that some cases, the data weren't saved to the db, not sure why:
+                    if is_temp_comment_changeset_done(temp_comment_changesets_for_process.id):
+                        # Update previous record
+                        prev_temp_comment_changesets_for_process = temp_comment_changesets_for_process
+                        if process_status.startswith("Processed"):
+                            prev_changeset_properties = changeset_properties
+
+                        print(f"{process_status}")
+                        remaining_records = total_records - i - 1
+                        re_run_iteration_count = 1
+                        keep_web_changeset_properties = None
+                        break
                     else:
-                        process_status = "Processed"
-                
-                # save to database:
-                save_comment_changeset_properties(process_status, temp_comment_changesets_for_process, changeset_properties, existing_bug_mozilla_changeset)
+                        time.sleep(3)
+                        print(f"Record didn't save to database, Re-do it. Attempt: {re_run_iteration_count}/5")
+                        re_run_iteration_count = re_run_iteration_count + 1
 
-                # Update previous record
-                prev_temp_comment_changesets_for_process = temp_comment_changesets_for_process
-                if process_status.startswith("Processed"):
-                    prev_changeset_properties = changeset_properties
-
-                print("Done")
-                record_count = record_count - 1
-
+                        # Keep the changeset properties so we don't make to make another web request if data didn't save to db correctly.
+                        if changeset_properties and changeset_properties.hash_id:
+                            keep_web_changeset_properties = changeset_properties
+                        continue
 
 
 ##################################################################################################### 
@@ -1101,7 +1150,7 @@ def start_scraper(task_group, start_row, end_row, scraper_type):
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="")
     parser.add_argument('arg_1', type=int, help='Argument 1')
-    parser.add_argument('arg_2', type=int, help='Arg ument 2')
+    parser.add_argument('arg_2', type=int, help='Argument 2')
     parser.add_argument('arg_3', type=int, help='Argument 3')
     parser_args = parser.parse_args()
     task_group = parser_args.arg_1
@@ -1109,11 +1158,10 @@ if __name__ == "__main__":
     end_row = parser_args.arg_3
 
     # Testing specific input arguments:
-    # task_group = 1   # Task group
-    # start_row = 41   # Start row
-    # end_row = 42   # End row
+    # task_group = 2   # Task group
+    # start_row = 0   # Start row
+    # end_row = 12500   # End row
     
     start_scraper(task_group, start_row, end_row, 'Changesets_From_Comments')
 
 print(f"[{strftime('%m/%d/%Y %H:%M:%S', localtime())}] PROGRAM FINISHED. EXIT!")
-
