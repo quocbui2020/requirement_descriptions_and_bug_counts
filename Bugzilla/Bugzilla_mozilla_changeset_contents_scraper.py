@@ -1139,19 +1139,19 @@ def start_scraper(task_group, start_row, end_row, scraper_type):
 ##################################################################################################### 
 
 if __name__ == "__main__":
-    # parser = argparse.ArgumentParser(description="")
-    # parser.add_argument('arg_1', type=int, help='Argument 1')
-    # parser.add_argument('arg_2', type=int, help='Argument 2')
-    # parser.add_argument('arg_3', type=int, help='Argument 3')
-    # parser_args = parser.parse_args()
-    # task_group = parser_args.arg_1
-    # start_row = parser_args.arg_2
-    # end_row = parser_args.arg_3
+    parser = argparse.ArgumentParser(description="")
+    parser.add_argument('arg_1', type=int, help='Argument 1')
+    parser.add_argument('arg_2', type=int, help='Argument 2')
+    parser.add_argument('arg_3', type=int, help='Argument 3')
+    parser_args = parser.parse_args()
+    task_group = parser_args.arg_1
+    start_row = parser_args.arg_2
+    end_row = parser_args.arg_3
 
     # Testing specific input arguments:
-    task_group = 2   # Task group
-    start_row = 0   # Start row
-    end_row = 12500   # End row
+    # task_group = 2   # Task group
+    # start_row = 0   # Start row
+    # end_row = 12500   # End row
     
     start_scraper(task_group, start_row, end_row, 'Changesets_From_Comments')
 
