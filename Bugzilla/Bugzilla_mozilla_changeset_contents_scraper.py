@@ -298,7 +298,7 @@ def get_changeset_properties_rev(request_url):
         
         if response:
             content = response.text
-        else:
+        elif response_status_code and response_status_code != 404:
             content = None
             response_status_code = -1
 
