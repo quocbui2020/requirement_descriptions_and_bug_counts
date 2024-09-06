@@ -1,3 +1,5 @@
+// https://dbdiagram.io/d/66bc97af8b4bb5230e1968f4
+
 Table "Bugzilla" {
   "id" int [not null]
   "bug_title" varchar(1000)
