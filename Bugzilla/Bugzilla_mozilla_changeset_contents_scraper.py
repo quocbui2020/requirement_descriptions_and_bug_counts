@@ -274,9 +274,9 @@ def get_changeset_properties_rev(request_url):
                 # request_url = 'https://hg.mozilla.org/mozilla-central/rev/00002cc231f4' # Quoc: This is a test url
                 response = requests.get(request_url)
             except requests.exceptions.RequestException as e: # Handle case when the request connection failed
+                attempt_number += 1
                 print(f"Failed request connection.\n Attempt {str(attempt_number)}/{str(max_retries)}. Retrying in 10 seconds...", end="", flush=True)
                 time.sleep(10)
-                attempt_number += 1
                 response = None
                 continue
 
@@ -793,7 +793,7 @@ def save_comment_changeset_properties(process_status, temp_comment_changesets_fo
                 is_valid_link = 0
             elif changeset_properties:
                 if changeset_properties.response_status_code != 200:
-                    is_valid_link = 1
+                    is_valid_link = 0
                 else:
                     full_hash_id = changeset_properties.hash_id
             
@@ -817,7 +817,6 @@ def save_comment_changeset_properties(process_status, temp_comment_changesets_fo
             params.extend([full_hash_id, is_valid_link, temp_comment_changesets_for_process.q1_id])
 
             if process_status == "Processed: 404" or process_status == "Failed Url - Human Intervention" or (changeset_properties and changeset_properties.response_status_code != 200):
-                # conn.commit() # Quoc: For testing in the development, I commented this out.
                 cursor.execute("BEGIN TRANSACTION")
                 cursor.execute(save_comment_changeset_properties_queries, params)
                 cursor.execute("COMMIT")
@@ -1095,7 +1094,7 @@ def start_scraper(task_group, start_row, end_row, scraper_type):
                             changeset_properties = get_changeset_properties_rev(temp_comment_changesets_for_process.q1_full_link)
 
                         # Just to be safe, make another call to retrieve 'bugzilla_mozilla_changesets' from db for current record in case q2.hash_id has incorrect mapping:
-                        if changeset_properties.response_status_code == 200 and not existing_bug_mozilla_changeset:
+                        if changeset_properties and changeset_properties.response_status_code == 200 and not existing_bug_mozilla_changeset:
                             existing_bug_mozilla_changeset = get_bugzilla_mozilla_changesets_by_hash_id(changeset_properties.hash_id)
 
                         # Determine the process_status for processed changeset:
@@ -1112,8 +1111,16 @@ def start_scraper(task_group, start_row, end_row, scraper_type):
                         else:
                             process_status = "Processed"
                     
-                    # save to database:
-                    save_comment_changeset_properties(process_status, temp_comment_changesets_for_process, changeset_properties, existing_bug_mozilla_changeset)
+                    
+                    if changeset_properties or existing_bug_mozilla_changeset:
+                        # save to database:
+                        save_comment_changeset_properties(process_status, temp_comment_changesets_for_process, changeset_properties, existing_bug_mozilla_changeset)
+                    else:
+                        # Case when both changeset_properties and existing_bug_mozilla_changeset are NULL. Still not sure why:
+                        time.sleep(3)
+                        print(f"Both changeset_properties and existing_bug_mozilla_changeset are NULL. Re-do it. Attempt: {re_run_iteration_count}/5")
+                        re_run_iteration_count = re_run_iteration_count + 1
+                        continue
 
                     # Make another call to database to check making sure it's actually done. Found that some cases, the data weren't saved to the db, not sure why:
                     if is_temp_comment_changeset_done(temp_comment_changesets_for_process.id):
@@ -1152,8 +1159,8 @@ if __name__ == "__main__":
 
     # Testing specific input arguments:
     # task_group = 2   # Task group
-    # start_row = 0   # Start row
-    # end_row = 12500   # End row
+    # start_row = 77112   # Start row
+    # end_row = 77113   # End row
     
     start_scraper(task_group, start_row, end_row, 'Changesets_From_Comments')
 
