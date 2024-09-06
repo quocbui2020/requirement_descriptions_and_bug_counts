@@ -274,7 +274,7 @@ def get_changeset_properties_rev(request_url):
                 # request_url = 'https://hg.mozilla.org/mozilla-central/rev/00002cc231f4' # Quoc: This is a test url
                 response = requests.get(request_url)
             except requests.exceptions.RequestException as e: # Handle case when the request connection failed
-                print(f"Failed request connection.\nRetrying in 10 seconds...", end="", flush=True)
+                print(f"Failed request connection.\n Attempt {str(attempt_number)}/{str(max_retries)}. Retrying in 10 seconds...", end="", flush=True)
                 time.sleep(10)
                 attempt_number += 1
                 response = None
@@ -293,12 +293,13 @@ def get_changeset_properties_rev(request_url):
                 print(f"Too many failed request attempts. Request url: {request_url}. Exit program.")
                 return None
         
+        response_content = None
         if response_status_code and response_status_code == 404:
-            content = None
+            response_content = None
         elif response:
-            content = response.text
+            response_content = response.text
         else: # Case when we have bad url or typos in url (Web server not found)
-            content = None
+            response_content = None
             response_status_code = -1
 
         file_changes = []
@@ -316,11 +317,11 @@ def get_changeset_properties_rev(request_url):
         ChangesetProperties = namedtuple('ChangesetProperties', ['backed_out_by', 'changeset_datetime', 'changeset_number', 'hash_id', 'parent_hashes', 'child_hashes', 'file_changes', 'response_status_code', 'changeset_summary_raw_content', 'bug_ids_from_summary', 'is_backed_out_changeset', 'backout_hashes'])
         # returnResult = ChangesetProperties(backed_out_by, changeset_datetime, changeset_number, changeset_hash_id, parent_hashes, child_hashes, file_changes, response_status_code, changeset_summary_raw_content, bug_ids_from_summary, is_backed_out_changeset, backout_hashes)
 
-        if response_status_code == 404 or response_status_code == -1:
+        if response_status_code == 404 or response_status_code == -1 or not response_content:
             return ChangesetProperties(backed_out_by, changeset_datetime, changeset_number, changeset_hash_id, parent_hashes, child_hashes, file_changes, response_status_code, changeset_summary_raw_content, bug_ids_from_summary, is_backed_out_changeset, backout_hashes)
 
         # Split the content
-        diff_blocks = content.split(".1\"></a><span id=\"l")
+        diff_blocks = response_content.split(".1\"></a><span id=\"l")
 
         # Extract changeset number and changeset hash id:
         changeset_hash_id_match = re.search(r'<title>.+changeset\s(\d+):([0-9a-f]+)<\/title>', diff_blocks[0])
