@@ -26,3 +26,4 @@
 - In finally block, make sure to close "cursor" and "conn"
 - [Optimal Tip]: Reduce the number of database call as much as possible. That's why we need to run them as batches.
 - [Optimal Tip]: When write code, think about runtimes and try to optimize it. Sometimes, hard-to-read code is more optimal. Find a good balance is essential.
+- [Note]: It is not a garantee that the transaction/batches saved to the database correctly. Therefore, when update/save data to database after processed it, make sure to add a check to confirm it before moving on to the next one.
