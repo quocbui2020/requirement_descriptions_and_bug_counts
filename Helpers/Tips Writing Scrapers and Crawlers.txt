@@ -1,0 +1,29 @@
+- Make the the application can be ran multiple processes (Each process shares a portion of workload).
+- Use async programming or multiple thread as needs.
+- Handle Deadlock, Race condition, Atomic process when access database.
+- Handle case when limit web request.
+- Handle if something error out -> Ideally if unexpected error, tag the record as "Human Interation" rather than stop the program entirely because we want the program to run overnight.
+- In database table contains records to be processed, make sure to consider the following column:
+	- Inserted_On/Created_On
+	- Modified_On
+	- Actual datetime of that record.
+	- Error message.
+	- Process_Status - Indicate the status of the record ("Error", "Human Interaction", ...)
+	- Is_Finished_Process (some indicator to indicate it was done).
+	- Task_Group (Divide large number of records in task group to process)
+	
+- Make Web Request:
+	- Handle 404, 500, 200, and other status codes.
+	- Handle invalid url.
+	- Handle valid, but wrong url.
+	
+- [Optimal Tip]: Use Postman to find the optimal way to retrieve data from web request (For instance, search to see if the server has Rest API). Reduce the number of web request as much as possible
+- When save records to the database, save in batches. DO NOT save/update each record at the time (TOO SLOW).
+- Make sure to set limit number of queries for each batch due to the string lengths in python.
+- Use cursor.execute("BEGIN TRANSACTION"), cursor.execute("COMMIT"), conn.commit(), cursor.execute("ROLLBACK TRANSACTION"), conn.rollback() to make the database access more atomic.
+- [Optimal Tip]: Make sure the assemble the list of batches before run command "cursor.execute" because this command will lock the database resource down until "conn.commit()" or "conn.rollback()".
+- If unexpected error, make sure to ROLLBACK TRANSACTION.
+- In finally block, make sure to close "cursor" and "conn"
+- [Optimal Tip]: Reduce the number of database call as much as possible. That's why we need to run them as batches.
+- [Optimal Tip]: When write code, think about runtimes and try to optimize it. Sometimes, hard-to-read code is more optimal. Find a good balance is essential.
+- [Note]: It is not a garantee that the transaction/batches saved to the database correctly. Therefore, when update/save data to database after processed it, make sure to add a check to confirm it before moving on to the next one.

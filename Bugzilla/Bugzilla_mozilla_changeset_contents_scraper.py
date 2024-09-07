@@ -267,6 +267,19 @@ def get_changeset_properties_rev(request_url):
     max_retries = 20 # if we attempt to make web request 20 times, I think it's safe to stop re-trying.
     response_status_code = 0
     response = None
+
+    file_changes = []
+    backed_out_by = ''
+    changeset_datetime = ''
+    parent_hashes = ''
+    child_hashes = ''
+    changeset_hash_id = ''
+    changeset_number = ''
+    changeset_summary_raw_content = ''
+    bug_ids_from_summary = ''
+    is_backed_out_changeset = False
+    backout_hashes = ''
+    
     try:
         while attempt_number <= max_retries:
             try:
@@ -288,10 +301,11 @@ def get_changeset_properties_rev(request_url):
                 time.sleep(10)
                 attempt_number += 1
 
-            if attempt_number == max_retries:
-                print(f"Too many failed request attempts. Request url: {request_url}. Exit program.")
-                return None
-        
+        else:
+            # Case if too many attempts:
+            response_status_code = -1
+            response = None
+
         response_content = None
         if response_status_code and response_status_code == 404:
             response_content = None
@@ -300,19 +314,7 @@ def get_changeset_properties_rev(request_url):
         else: # Case when we have bad url or typos in url (Web server not found)
             response_content = None
             response_status_code = -1
-
-        file_changes = []
-        backed_out_by = ''
-        changeset_datetime = ''
-        parent_hashes = ''
-        child_hashes = ''
-        changeset_hash_id = ''
-        changeset_number = ''
-        changeset_summary_raw_content = ''
-        bug_ids_from_summary = ''
-        is_backed_out_changeset = False
-        backout_hashes = ''
-
+        
         ChangesetProperties = namedtuple('ChangesetProperties', ['backed_out_by', 'changeset_datetime', 'changeset_number', 'hash_id', 'parent_hashes', 'child_hashes', 'file_changes', 'response_status_code', 'changeset_summary_raw_content', 'bug_ids_from_summary', 'is_backed_out_changeset', 'backout_hashes'])
         # returnResult = ChangesetProperties(backed_out_by, changeset_datetime, changeset_number, changeset_hash_id, parent_hashes, child_hashes, file_changes, response_status_code, changeset_summary_raw_content, bug_ids_from_summary, is_backed_out_changeset, backout_hashes)
 
@@ -434,11 +436,12 @@ def get_changeset_properties_rev(request_url):
             bug_ids_from_summary, 
             is_backed_out_changeset, 
             backout_hashes)
-
+    
     except Exception as e:
-        print(f"Error: {e}")
-        traceback.print_exc()
-        exit()
+        # If error out at this point, let not exit the program, but set the process status as require Human Intervention.
+        # One of the errors could be we access the valid webpage, but not the changeset page.
+        response_status_code = -1
+        return ChangesetProperties(backed_out_by, changeset_datetime, changeset_number, changeset_hash_id, parent_hashes, child_hashes, file_changes, response_status_code, changeset_summary_raw_content, bug_ids_from_summary, is_backed_out_changeset, backout_hashes)
 
 def save_changeset_properties(changeset_hash_id, changeset_properties):
     global conn_str, save_changeset_parent_child_hashes_query, save_commit_file_query
@@ -1129,6 +1132,7 @@ def start_scraper(task_group, start_row, end_row, scraper_type):
                         time.sleep(3)
                         print(f"Both changeset_properties and existing_bug_mozilla_changeset are NULL. Re-do it. Attempt: {re_run_iteration_count}/5")
                         re_run_iteration_count = re_run_iteration_count + 1
+                        prev_changeset_properties = None
                         continue
 
                     # Make another call to database to check making sure it's actually done. Found that some cases, the data weren't saved to the db, not sure why:
