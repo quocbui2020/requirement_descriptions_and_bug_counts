@@ -1062,7 +1062,7 @@ def start_scraper(task_group, start_row, end_row, scraper_type):
                     temp_comment_changesets_for_process = namedtuple_type(*records[i]) # namedtuple type
                     process_status = 'Unknown'
                     changeset_properties = None
-                    print(f"[{strftime('%m/%d/%Y %H:%M:%S', localtime())}] Task Group: {str(task_group)}. Remainings: {str(remaining_records)}. Process row number {temp_comment_changesets_for_process.row_num}...", end="", flush=True)
+                    print(f"[{strftime('%m/%d/%Y %H:%M:%S', localtime())}] Task Group: {str(task_group)} [{str(start_row)}-{str(end_row)}]. Remainings: {str(remaining_records)}. Process row number {temp_comment_changesets_for_process.row_num}...", end="", flush=True)
 
                     lookup_hash_id = temp_comment_changesets_for_process.q2_hash_id
                     
