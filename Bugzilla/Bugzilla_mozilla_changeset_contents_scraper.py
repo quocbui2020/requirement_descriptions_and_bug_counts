@@ -999,7 +999,7 @@ def start_scraper(task_group, start_row, end_row, scraper_type):
             for record in list_of_records:
                 Row_Num, changeset_hash_Id, Bug_Ids, Changeset_Link, Parent_Hashes = record
 
-                print(f"[{strftime('%m/%d/%Y %H:%M:%S', localtime())}] Task Group: {str(task_group)}. Remainings: {str(record_count)}. Scraping properties of {changeset_hash_Id}...", end="", flush=True)
+                print(f"[{strftime('%m/%d/%Y %H:%M:%S', localtime())}] Task Group: {str(task_group)} [{str(start_row)}-{str(end_row)}]. Remainings: {str(record_count)}. Scraping properties of {changeset_hash_Id}...", end="", flush=True)
 
                 # Iterate through 'Bug_Ids' and check if any of them are 'resolved' bugs. If not, no need to process further
                 list_of_bug_id = Bug_Ids.split(" | ")
