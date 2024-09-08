@@ -53,7 +53,7 @@ class ExtractFunctionFromFileContentHelper:
         content (str): The content of the file as a string.
         
         Returns:
-        list: A list of tuples where each tuple contains the function name and entire function.
+        list: A list of tuples where each tuple contains the function name and entire function implementation.
         """
         list_of_functions = []
 
@@ -178,15 +178,22 @@ class ExtractFunctionFromFileContentHelper:
         return list_of_functions
 
 
-
-
     ##########################################
     ################## C++ ###################
     ##########################################
-
-    def remove_cpp_comments(content):
+    # https://chatgpt.com/c/66dbc955-4f44-8004-beaf-3eb303f23477
+    def remove_cpp_comments(self, content):
         return
-    def extract_cpp_functions(content):
+    def extract_cpp_functions(self, content):
+        """
+        Extract all C++ functions.
+        
+        Parameters:
+        content (str): The content of the file as a string.
+        
+        Returns:
+        list: A list of tuples where each tuple contains the function name and entire function implementation.
+        """
         list_of_cpp_functions = []
         #TODO: finished it
 
@@ -196,13 +203,106 @@ class ExtractFunctionFromFileContentHelper:
     ##########################################
     ################### C ####################
     ##########################################
+    # https://chatgpt.com/c/66dbc9d9-2b38-8004-9d53-90a97cb6d9b8
+    def remove_c_comments(self, content):
+        # Regular expression patterns to match C-style comments
+        block_comment_pattern = re.compile(r'/\*.*?\*/', re.DOTALL)
+        line_comment_pattern = re.compile(r'//.*?$' , re.MULTILINE)
+        
+        # Remove block comments
+        file_content_without_comments = re.sub(block_comment_pattern, '', content)
+        # Remove line comments
+        file_content_without_comments = re.sub(line_comment_pattern, '', file_content_without_comments)
+        
+        return file_content_without_comments
+    
+    def extract_c_functions(self, content):
+        """
+        Extract all C functions.
+        
+        Parameters:
+        content (str): The content of the file as a string.
+        
+        Returns:
+        list: A list of tuples where each tuple contains the function name and entire function implementation.
+        """
 
-    def remove_c_comments(content):
-        return
-    def extract_c_functions(content):
         list_of_c_functions = []
-        #TODO: finished it. Copy over the code from FFmpeg project.
+        function_names = []
 
+        content = self.remove_c_comments(content)
+
+        ## Explain of the regex in 'function_pattern':
+        # (?: ...) : A non-capturing group that doesn't create a backreference.
+        # [^a-zA-Z0-9\s*\r\n\{\(] : Matches any single character that is not a letter (a-zA-Z), digit (0-9), whitespace (\s*), newline (\r\n), or the characters {, (, #, _.
+        # \s* : Matches zero or more spaces (whitespace).
+        # \w+ : Matches one or more word characters (letters, digits, or underscore).
+        # ([\w\s*]+) : Capturing group that matches one or more word characters (\w) or spaces (\s*).
+        # \( : Matches an opening parenthesis (.
+        # function_pattern = re.compile(r'(?:[^a-zA-Z0-9\s*\r\n\{\(#_])\s*\w+([\w\s*]+)\(')
+        function_pattern = re.compile(r'(?:[^a-zA-Z0-9\s*\r\n\{\(#_])\s*([\w\s*]+)\(') # Work best for 'file_content1' in unit test function 'test_extract_c_functions'
+        
+        parenthesis_count = 0
+        curly_bracket_count = 0
+        keyword = ''
+        implementation_start = 0
+        
+        def c_keywords():
+            return {
+                'if', 'else', 'while', 'for', 'do', 'switch', 'case', 'default',
+                'break', 'continue', 'return', 'goto', 'typedef', 'struct', 'union',
+                'enum', 'static', 'const', 'volatile', 'inline', 'extern', 'auto',
+                'register', 'sizeof'
+            }
+        
+        i = 0
+        while i < len(content):
+            if parenthesis_count == 0:
+                match = function_pattern.search(content, i)
+                if match:
+                    # Attempt to get the potential class name.
+                    keyword = match.group(1)
+                    keyword_matches = re.findall(r'\b[a-zA-Z0-9_]+\b', keyword) # Regex explain: matches whole words that consist of alphanumeric characters and underscores.
+                    if keyword_matches:
+                        keyword = keyword_matches[-1]  # Get the last match as the function name
+                    else:
+                        keyword = ''  # Set keyword to an empty string if no matches are found
+
+                    i = match.end()  # Set i to the end of the matched pattern
+                    parenthesis_count += 1
+                    implementation_start = match.start(1)  # Start of function implementation
+                else:
+                    i += 1
+            else:
+                if content[i] == '(':
+                    parenthesis_count += 1
+                elif content[i] == ')':
+                    parenthesis_count -= 1
+                    if parenthesis_count == 0 and curly_bracket_count == 0 and keyword:
+                        # Skip whitespace and check for '{'
+                        j = i + 1
+                        while j < len(content) and content[j] in ' \t\n\r':
+                            j += 1
+                        if j < len(content) and content[j] == '{':
+                            curly_bracket_count += 1
+                            i = j + 1  # Move i to the position right after '{'
+                            while i < len(content) and curly_bracket_count > 0:
+                                if content[i] == '{':
+                                    curly_bracket_count += 1
+                                elif content[i] == '}':
+                                    curly_bracket_count -= 1
+                                i += 1
+                            if curly_bracket_count == 0:
+                                i -= 1 # set i index back to '}' character
+                                function_implementation = content[implementation_start:i+1].strip()
+                                if keyword not in c_keywords():
+                                    function_names.append(keyword)
+                                    list_of_c_functions.append((keyword, function_implementation))
+                                    i -= 1 #set i index to character before '}'
+                                keyword = ''
+                        else:
+                            keyword = ''
+                i += 1
         return list_of_c_functions
 
 
@@ -218,31 +318,6 @@ class ExtractFunctionFromFileContentHelper:
 
         return list_of_js_functions
 
-##########################################
-##########################################
-# Testing area/Unit Tests:
-if __name__ == '__main__':
-    response = requests.get(f"https://hg.mozilla.org/mozilla-central/raw-file/000b7732d8f0996ab5c8e55a98514d592e9391d5/testing/web-platform/harness/wptrunner/browsers/firefox.py")
-    full_py_testing_content = '''
-    def functionA(arg_1,
-        arg_2):   
-        inside function A.
-            inside function A.
-        inside function A.
 
-    statement outside of the function.
+### End of class [ExtractFunctionFromFileContentHelper]
 
-    def functionB(arg_1, arg_2):
-        inside function B.
-
-    class A:
-        def functionC(arg_1, arg_2):
-            inside function C.
-
-    def functionD(arg_1, arg_2):
-        inside function D.
-    '''
-
-    helper = ExtractFunctionFromFileContentHelper()
-    response_text_without_comments = helper.remove_python_comments(response.text)
-    list_py_functions = helper.extract_python_functions(response_text_without_comments)
