@@ -3476,5 +3476,8 @@ int main()
 ##############################################################################
 
 if __name__ == '__main__':
-    # unittest.main(argv=['first-arg-is-ignored'], exit=False) # Run all test cases
-    unittest.main(argv=['first-arg-is-ignored', 'ExtractFunctionTest.test_extract_cpp_functions'], exit=False) # Run specific test function
+    # Run all test functions:
+    # unittest.main(argv=['first-arg-is-ignored'], exit=False)
+
+    # Run a specific test function:
+    unittest.main(argv=['first-arg-is-ignored', 'ExtractFunctionTest.test_extract_cpp_functions'], exit=False)
