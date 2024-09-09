@@ -16,6 +16,33 @@ class ExtractFunctionFromFileContentHelper:
     def __init__ (self): #`self` refers to the class object itself (every function in a class requires `self` as the 1st input parameter)
         return
     
+    def remove_comments(self, file_type, content):
+        match file_type:
+            case 'cpp' | 'c' | 'js':
+                # Regular expression patterns to match C-style comments
+                block_comment_pattern = re.compile(r'/\*.*?\*/', re.DOTALL)
+                line_comment_pattern = re.compile(r'//.*?$' , re.MULTILINE)
+                
+                # Remove block comments
+                content = re.sub(block_comment_pattern, '', content)
+                # Remove line comments
+                content = re.sub(line_comment_pattern, '', content)
+                
+            case 'py':
+                # Pattern to match single-line comments
+                single_line_comment_pattern = r'#.*' # .*: zero or more of any characters (EXCEPT end line terminator '\n')
+                
+                # Pattern to match multi-line strings/comments
+                multi_line_comment_pattern = r'\'\'\'[\s\S]*?\'\'\'|\"\"\"[\s\S]*?\"\"\"'   # \s: white space char; \S: non-white space char; |: or;
+                
+                # First remove multi-line comments
+                content = re.sub(multi_line_comment_pattern, '', content)
+                
+                # Then remove single-line comments
+                content = re.sub(single_line_comment_pattern, '', content)
+        
+        return content
+    
     ##########################################
     ################# PYTHON #################
     ##########################################
@@ -30,20 +57,8 @@ class ExtractFunctionFromFileContentHelper:
         Returns:
         str: The content without comments.
         """
-
-        # Pattern to match single-line comments
-        single_line_comment_pattern = r'#.*' # .*: zero or more of any characters (EXCEPT end line terminator '\n')
         
-        # Pattern to match multi-line strings/comments
-        multi_line_comment_pattern = r'\'\'\'[\s\S]*?\'\'\'|\"\"\"[\s\S]*?\"\"\"'   # \s: white space char; \S: non-white space char; |: or;
-        
-        # First remove multi-line comments
-        content = re.sub(multi_line_comment_pattern, '', content)
-        
-        # Then remove single-line comments
-        content = re.sub(single_line_comment_pattern, '', content)
-        
-        return content
+        return self.remove_comments(file_type='py', content=content)
     
     def extract_python_functions(self, content):
         """
@@ -183,7 +198,18 @@ class ExtractFunctionFromFileContentHelper:
     ##########################################
     # https://chatgpt.com/c/66dbc955-4f44-8004-beaf-3eb303f23477
     def remove_cpp_comments(self, content):
-        return
+        """
+        Remove all C++ comments from the given content.
+        
+        Parameters:
+        content (str): The content of the file as a string.
+        
+        Returns:
+        str: The content without comments.
+        """
+        
+        return self.remove_comments(file_type='cpp', content=content)
+    
     def extract_cpp_functions(self, content):
         """
         Extract all C++ functions.
@@ -205,16 +231,17 @@ class ExtractFunctionFromFileContentHelper:
     ##########################################
     # https://chatgpt.com/c/66dbc9d9-2b38-8004-9d53-90a97cb6d9b8
     def remove_c_comments(self, content):
-        # Regular expression patterns to match C-style comments
-        block_comment_pattern = re.compile(r'/\*.*?\*/', re.DOTALL)
-        line_comment_pattern = re.compile(r'//.*?$' , re.MULTILINE)
+        """
+        Remove all C comments from the given content.
         
-        # Remove block comments
-        file_content_without_comments = re.sub(block_comment_pattern, '', content)
-        # Remove line comments
-        file_content_without_comments = re.sub(line_comment_pattern, '', file_content_without_comments)
+        Parameters:
+        content (str): The content of the file as a string.
         
-        return file_content_without_comments
+        Returns:
+        str: The content without comments.
+        """
+        
+        return self.remove_comments(file_type='c', content=content)
     
     def extract_c_functions(self, content):
         """
@@ -226,7 +253,7 @@ class ExtractFunctionFromFileContentHelper:
         Returns:
         list: A list of tuples where each tuple contains the function name and entire function implementation.
         """
-
+        # TODO: Need to update the function to capture function signature instead of just function name because there could be overloading functions. C code doesn't support overloading, but C++ does.
         list_of_c_functions = []
         function_names = []
 
@@ -310,11 +337,47 @@ class ExtractFunctionFromFileContentHelper:
     ############### JavaScript ###############
     ##########################################
 
-    def remove_js_comments(content):
-        return
-    def extract_js_functions(content):
+    def remove_js_comments(self, content):
+        """
+        Remove all JavaScript comments from the given content.
+        
+        Parameters:
+        content (str): The content of the file as a string.
+        
+        Returns:
+        str: The content without comments.
+        """
+        
+        return self.remove_comments(file_type='js', content=content)
+    
+    def extract_js_functions(self, content):
         list_of_js_functions = []
-        #TODO: finished it
+
+        content = self.remove_js_comments(content)
+
+        # Regular expression patterns for matching function declarations
+        function_patterns = [
+            # Match standard function declarations: function functionName(...) {...}
+            r'function\s+(\w+)\s*\([^)]*\)\s*\{[^}]*\}',
+            
+            # Match function expressions (anonymous or named): var/let/const functionName = function(...) {...}
+            r'(?:var|let|const)\s+(\w+)\s*=\s*function\s*\([^)]*\)\s*\{[^}]*\}',
+
+            # Match arrow functions: const functionName = (...) => {...}
+            r'(?:var|let|const)\s+(\w+)\s*=\s*\([^)]*\)\s*=>\s*\{[^}]*\}',
+        ]
+
+        # Compile a regex pattern that matches any of the function patterns
+        combined_pattern = '|'.join(function_patterns)
+        
+        # Find all matches using the combined pattern
+        matches = re.findall(combined_pattern, content)
+        
+        # Extract all function implementations
+        functions = re.findall(combined_pattern.replace(r'(\w+)', r'(\w+)([^}]+\})'), content)
+
+        # Create a list of function names and implementations
+        list_of_js_functions = [{'name': match[0], 'implementation': match[1].strip()} for match in functions]
 
         return list_of_js_functions
 

@@ -6,12 +6,12 @@ helper = ExtractFunctionContent.ExtractFunctionFromFileContentHelper()
 class ExtractFunctionTest(unittest.TestCase):
     def print_result(self, result):
         for e in result:
-            print(f"\nFunction: {e[0]}\n{e[1]}\n")
-            # print(f"\nFunction: {e[0]}\n")
+            print(f"\nFunction: {e[0]}\n{e[1]}\n") # Print function signature and function implementations
+            # print(f"\nFunction: {e[0]}\n") # Print only function signature
 
     # Test function for 'extract_python_functions':
     def test_extract_python_functions(self):
-        file_content = '''
+        py_content_1 = '''
 def functionA(arg_1,
     arg_2):   
     inside function A.
@@ -31,7 +31,7 @@ def functionD(arg_1, arg_2):
     inside function D.
 '''
 
-        result = helper.extract_python_functions(file_content)
+        result = helper.extract_python_functions(py_content_1)
         self.print_result(result)
 
         self.assertEqual(result[0][0], 'def functionA(arg_1, arg_2):')
@@ -45,7 +45,7 @@ def functionD(arg_1, arg_2):
 
     # Test function for 'extract_c_functions':
     def test_extract_c_functions(self):
-        file_content1 = ''';
+        c_content_1 = ''';
 #include "config_components.h"
 
 static void draw_digit(int digit, uint8_t *dst, ptrdiff_t dst_linesize, int segment_width)
@@ -88,12 +88,95 @@ void test_fill_picture(AVFilterContext *ctx, AVFrame *frame)
 #endif /* CONFIG_ZONEPLATE_FILTER */
 '''
         
-        result = helper.extract_c_functions(file_content1)
+        c_content_2 = '''
+#include <stdio.h>
+#include <stdarg.h>
+
+// Basic Function Declaration
+int basicFunction(int a, int b) {
+    return a + b;
+}
+
+// Function with No Parameters
+void noParamFunction(void) {
+    printf("No parameters\n");
+}
+
+// Function with Pointer Parameters
+void pointerFunction(int* ptr) {
+    *ptr = *ptr + 1;
+}
+
+// Overload function above
+double pointerFunction(int* ptr, int a, int c) {
+    *ptr = *ptr + 1;
+}
+
+// Function with Array Parameter
+void arrayFunction(int arr[], int size) {
+    for(int i = 0; i < size; i++) {
+        printf("%d ", arr[i]);
+    }
+    printf("\\n");
+}
+
+// Function with Variable Arguments (using stdarg.h)
+void varArgsFunction(const char* format, ...) {
+    va_list args;
+    va_start(args, format);
+    vprintf(format, args);
+    va_end(args);
+}
+
+// Recursive Function
+int recursiveFunction(int n) {
+    if (n <= 1) return 1;
+    return n * recursiveFunction(n - 1);
+}
+
+// Inline Function (C99 and later)
+inline int inlineFunction(int a, int b) {
+    return a * b;
+}
+
+// Function with Function Pointer as Parameter
+void funcPointerFunction(void (*funcPtr)(void)) {
+    funcPtr();
+}
+
+// A Simple Function to be used as a Function Pointer
+void simpleFunction(void) {
+    printf("Function Pointer Executed\\n");
+}
+
+// Main Function
+int main() {
+    printf("Test C Functions\\n");
+    
+    // Calling pointer function
+    int val = 5;
+    pointerFunction(&val);
+    printf("Pointer Function Result: %d\\n", val);
+
+    // Calling array function
+    int arr[] = {1, 2, 3, 4, 5};
+    arrayFunction(arr, 5);
+
+    // Calling function with variable arguments
+    varArgsFunction("Variable Arguments: %d %s\\n", 10, "test");
+
+    // Calling function with function pointer
+    funcPointerFunction(simpleFunction);
+
+    return 0;
+}
+'''
+        result = helper.extract_c_functions(c_content_1)
         self.print_result(result)
 
     # Test function for 'extract_cpp_functions':
     def test_extract_cpp_functions(self):
-        file_content = '''
+        cpp_content_1 = '''
 /* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
 /* vim: set ts=8 sts=2 et sw=2 tw=80: */
 /* This Source Code Form is subject to the terms of the Mozilla Public
@@ -3462,9 +3545,190 @@ int main()
 }
 '''
 
-        result = helper.extract_c_functions(file_content)
+        cpp_content_2 = '''
+#include <iostream>
+using namespace std;
+
+// Basic Function Declaration
+int basicFunction(int a, int b) {
+    return a + b;
+}
+
+// Inline Function
+inline int inlineFunction(int a, int b) {
+    return a * b;
+}
+
+// Const Member Function inside a Class
+class MyClass {
+public:
+    int myMethod(int a) const {
+        return a * a;
+    }
+
+    // Static Member Function
+    static int staticMethod(int a) {
+        return a * 2;
+    }
+
+    // Virtual Function
+    virtual int virtualMethod(int a) {
+        return a + 1;
+    }
+
+    // Pure Virtual Function
+    virtual int pureVirtualMethod(int a) = 0;
+};
+
+// Friend Function
+class AnotherClass {
+    int x;
+    friend int friendFunction(AnotherClass obj);
+};
+
+int friendFunction(AnotherClass obj) {
+    return obj.x;
+}
+
+// Template Function
+template <typename T>
+T templateFunction(T a, T b) {
+    return a > b ? a : b;
+}
+
+// Lambda Function
+auto lambdaFunction = [](int a, int b) -> int {
+    return a + b;
+};
+
+// Function Overloading
+int overloadedFunction(int a, int b) {
+    return a + b;
+}
+
+double overloadedFunction(double a, double b) {
+    return a + b;
+}
+
+// Recursive Function
+int recursiveFunction(int n) {
+    if (n <= 1) return 1;
+    return n * recursiveFunction(n - 1);
+}
+
+// Function with Default Parameters
+int defaultParamFunction(int a, int b = 10) {
+    return a + b;
+}
+
+// Function with Reference Parameters
+void referenceFunction(int &a) {
+    a = a * 2;
+}
+
+// Function with Pointer Parameters
+void pointerFunction(int* ptr) {
+    *ptr = *ptr + 1;
+}
+
+// Main Function
+int main() {
+    cout << "Test C++ Functions" << endl;
+    return 0;
+}
+'''
+        result = helper.extract_c_functions(cpp_content_1)
         self.print_result(result)
         
+    def test_extract_js_functions(self):
+        javascript_content_1 = '''
+// Function Declaration
+function declaredFunction(param1, param2) {
+    return param1 + param2;
+}
+
+// Function Expression
+const expressionFunction = function(param1, param2) {
+    return param1 * param2;
+};
+
+// Arrow Function
+const arrowFunction = (param1, param2) => {
+    return param1 - param2;
+};
+
+// Arrow Function (concise body)
+const conciseArrowFunction = (param1, param2) => param1 / param2;
+
+// Immediately Invoked Function Expression (IIFE)
+(function() {
+    console.log("IIFE executed");
+})();
+
+// IIFE with a named function expression
+(function namedIIFE() {
+    console.log("Named IIFE executed");
+})();
+
+// Generator Function
+function* generatorFunction() {
+    yield 1;
+    yield 2;
+}
+
+// Method in an Object
+const obj = {
+    methodFunction(param1) {
+        return param1 ** 2;
+    },
+    anotherMethod: function(param1) {
+        return param1 ** 3;
+    },
+    arrowMethod: (param1) => param1 ** 4
+};
+
+// Class with methods
+class MyClass {
+    classMethod(param1) {
+        return param1.toUpperCase();
+    }
+    static staticMethod(param1) {
+        return param1.toLowerCase();
+    }
+}
+
+// Async Function
+async function asyncFunction(param1) {
+    return new Promise((resolve) => {
+        resolve(param1 * 2);
+    });
+}
+
+// Async Arrow Function
+const asyncArrowFunction = async (param1) => {
+    return await new Promise((resolve) => {
+        resolve(param1 / 2);
+    });
+};
+
+/*
+/*
+// This function below is inside a comment, should not be detected:
+const functionInComment = async (p2) => {
+    return await new Promise((resolve) => {
+        resolve(p2 / 2);
+    });
+};
+
+*/
+'''
+
+        # Test remove_js_comments function:
+        # content_without_comments = helper.remove_js_comments(javascript_content_1)
+        # print(content_without_comments)
+
+        result = helper.extract_js_functions(javascript_content_1)
+        self.print_result(result)
 
 
 
@@ -3480,4 +3744,4 @@ if __name__ == '__main__':
     # unittest.main(argv=['first-arg-is-ignored'], exit=False)
 
     # Run a specific test function:
-    unittest.main(argv=['first-arg-is-ignored', 'ExtractFunctionTest.test_extract_cpp_functions'], exit=False)
+    unittest.main(argv=['first-arg-is-ignored', 'ExtractFunctionTest.test_extract_js_functions'], exit=False)
