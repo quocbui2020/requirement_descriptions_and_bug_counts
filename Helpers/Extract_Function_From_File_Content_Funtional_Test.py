@@ -9,7 +9,7 @@ class ExtractFunctionTest(unittest.TestCase):
             print(f"\nFunction: {e[0]}\n{e[1]}\n") # Print function signature and function implementations
             # print(f"\nFunction: {e[0]}\n") # Print only function signature
 
-    # Test function for 'extract_python_functions':
+    ### Test function for 'extract_python_functions' ###
     def test_extract_python_functions(self):
         py_content_1 = '''
 def functionA(arg_1,
@@ -43,7 +43,7 @@ def functionD(arg_1, arg_2):
         self.assertEqual(result[3][0], 'def functionD(arg_1, arg_2):')
         self.assertEqual(result[3][1], 'def functionD(arg_1, arg_2):\n    inside function D.')
 
-    # Test function for 'extract_c_functions':
+    ### Test function for 'extract_c_functions' ###
     def test_extract_c_functions(self):
         c_content_1 = ''';
 #include "config_components.h"
@@ -174,7 +174,7 @@ int main() {
         result = helper.extract_c_functions(c_content_1)
         self.print_result(result)
 
-    # Test function for 'extract_cpp_functions':
+    ### Test function for 'extract_cpp_functions' ###
     def test_extract_cpp_functions(self):
         cpp_content_1 = '''
 /* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
@@ -3640,6 +3640,7 @@ int main() {
         result = helper.extract_c_functions(cpp_content_1)
         self.print_result(result)
         
+    ### Test function for 'extract_js_functions' ###
     def test_extract_js_functions(self):
         javascript_content_1 = '''
 // Function Declaration
@@ -4412,6 +4413,7 @@ function run_test() {
 '''
 
         javascript_content_3 = '''
+;
 function makeAttachment(opts = {}) {
   let attachment = Cc[
     "@mozilla.org/messengercompose/attachment;1"
@@ -4426,7 +4428,7 @@ function makeAttachment(opts = {}) {
         # content_without_comments = helper.remove_js_comments(javascript_content_1)
         # print(content_without_comments)
 
-        result = helper.extract_js_functions(javascript_content_3)
+        result = helper.extract_js_functions(javascript_content_1)
         self.print_result(result)
 
 
@@ -4435,7 +4437,7 @@ function makeAttachment(opts = {}) {
 
 
 
-
+##############################################################################
 ##############################################################################
 
 if __name__ == '__main__':

@@ -277,9 +277,7 @@ class ExtractFunctionFromFileContentHelper:
         def c_keywords():
             return {
                 'if', 'else', 'while', 'for', 'do', 'switch', 'case', 'default',
-                'break', 'continue', 'return', 'goto', 'typedef', 'struct', 'union',
-                'enum', 'static', 'const', 'volatile', 'inline', 'extern', 'auto',
-                'register', 'sizeof'
+                'break', 'continue', 'return', 'goto'
             }
         
         i = 0
@@ -288,12 +286,14 @@ class ExtractFunctionFromFileContentHelper:
                 match = function_pattern.search(content, i)
                 if match:
                     # Attempt to get the potential class name.
-                    keyword = match.group(1)
-                    keyword_matches = re.findall(r'\b[a-zA-Z0-9_]+\b', keyword) # Regex explain: matches whole words that consist of alphanumeric characters and underscores.
-                    if keyword_matches:
-                        keyword = keyword_matches[-1]  # Get the last match as the function name
+                    match_group = match.group(1)
+                    # Break the content in match_group into words:
+                    match_group_words = re.findall(r'\b[a-zA-Z0-9_]+\b', match_group) # Regex explain: matches whole words that consist of alphanumeric characters and underscores.
+                    if match_group_words:
+                        # The last word is a potential class name:
+                        potential_class_name = match_group_words[-1]  # Get the last match as the function name
                     else:
-                        keyword = ''  # Set keyword to an empty string if no matches are found
+                        potential_class_name = ''  # Set keyword to an empty string if no matches are found
 
                     i = match.end()  # Set i to the end of the matched pattern
                     parenthesis_count += 1
@@ -305,7 +305,7 @@ class ExtractFunctionFromFileContentHelper:
                     parenthesis_count += 1
                 elif content[i] == ')':
                     parenthesis_count -= 1
-                    if parenthesis_count == 0 and curly_bracket_count == 0 and keyword:
+                    if parenthesis_count == 0 and curly_bracket_count == 0 and potential_class_name:
                         # Skip whitespace and check for '{'
                         j = i + 1
                         while j < len(content) and content[j] in ' \t\n\r':
@@ -322,13 +322,14 @@ class ExtractFunctionFromFileContentHelper:
                             if curly_bracket_count == 0:
                                 i -= 1 # set i index back to '}' character
                                 function_implementation = content[implementation_start:i+1].strip()
-                                if keyword not in c_keywords():
-                                    function_names.append(keyword)
-                                    list_of_c_functions.append((keyword, function_implementation))
+                                # 'potential_class_name' is potential class name, if it match with the keywords in c language, then do not consider it as a function name:
+                                if potential_class_name not in c_keywords():
+                                    function_names.append(potential_class_name)
+                                    list_of_c_functions.append((potential_class_name, function_implementation))
                                     i -= 1 #set i index to character before '}'
-                                keyword = ''
+                                potential_class_name = ''
                         else:
-                            keyword = ''
+                            potential_class_name = ''
                 i += 1
         return list_of_c_functions
 
@@ -354,8 +355,7 @@ class ExtractFunctionFromFileContentHelper:
         # https://chatgpt.com/c/66df6725-ebdc-8004-b19f-49ba538b0d22
 
         content = self.remove_js_comments(content)
-
-        list_of_js_functions = []
+        
         # Define individual regular expression patterns for matching function declarations
         patterns = [
             # Match standard function declarations: function functionName(...) {...}
@@ -367,28 +367,73 @@ class ExtractFunctionFromFileContentHelper:
             # Match arrow functions: const functionName = (...) => {...}
             r'(?:var|let|const)\s+(\w+)\s*=\s*\([^)]*\)\s*=>\s*\{([^}]*)\}',
         ]
+        function_pattern = re.compile(r'(?:[^a-zA-Z0-9\s*\r\n\{\(#_])\s*([\w\s*]+)\(')
 
-        bracket_tracker = {
-                "missing_closed_curly_brackets": 0,
-                "missing_closed_squared_brackets": 0,
-                "missing_closed_parentheses": 0,
-                "missing_single_quote": False,
-                "missing_double_quote": False,
+        parenthesis_count = 0
+        curly_bracket_count = 0
+        keyword = ''
+        implementation_start = 0
+        list_of_js_functions = []
+        function_names = []
+        
+        def js_keywords():
+            return {
+                # Control flow and function declarations that can be followed by '('
+                'if', 'else', 'while', 'do', 'for', 'switch', 'catch', 'function',
+                'with', 'return', 'throw'
             }
         
-        # Iterate over each pattern and find matches
-        for pattern in patterns:
-            # Extract function names and implementations using the current pattern
-            matches = re.findall(pattern, content, flags=re.DOTALL | re.MULTILINE)
-            
-            # For each match, store the function name and implementation
-            for match in matches:
-                function_name, function_body = match
-                list_of_js_functions.append((
-                    function_name,
-                    function_body.strip()  # Remove extra spaces
-                ))
-        
+        i = 0
+        while i < len(content):
+            if parenthesis_count == 0:
+                match = function_pattern.search(content, i)
+                if match:
+                    # Attempt to get the potential class name.
+                    match_group = match.group(1)
+                    # Break the content in match_group into words:
+                    match_group_words = re.findall(r'\b[a-zA-Z0-9_]+\b', match_group) # Regex explain: matches whole words that consist of alphanumeric characters and underscores.
+                    if match_group_words:
+                        # The last word is a potential class name:
+                        potential_class_name = match_group_words[-1]  # Get the last match as the function name
+                    else:
+                        potential_class_name = ''  # Set keyword to an empty string if no matches are found
+
+                    i = match.end()  # Set i to the end of the matched pattern
+                    parenthesis_count += 1
+                    implementation_start = match.start(1)  # Start of function implementation
+                else:
+                    i += 1
+            else:
+                if content[i] == '(':
+                    parenthesis_count += 1
+                elif content[i] == ')':
+                    parenthesis_count -= 1
+                    if parenthesis_count == 0 and curly_bracket_count == 0 and potential_class_name:
+                        # Skip whitespace and check for '{'
+                        j = i + 1
+                        while j < len(content) and content[j] in ' \t\n\r':
+                            j += 1
+                        if j < len(content) and content[j] == '{':
+                            curly_bracket_count += 1
+                            i = j + 1  # Move i to the position right after '{'
+                            while i < len(content) and curly_bracket_count > 0:
+                                if content[i] == '{':
+                                    curly_bracket_count += 1
+                                elif content[i] == '}':
+                                    curly_bracket_count -= 1
+                                i += 1
+                            if curly_bracket_count == 0:
+                                i -= 1 # set i index back to '}' character
+                                function_implementation = content[implementation_start:i+1].strip()
+                                # 'potential_class_name' is potential class name, if it match with the keywords in c language, then do not consider it as a function name:
+                                if potential_class_name not in js_keywords():
+                                    function_names.append(potential_class_name)
+                                    list_of_js_functions.append((potential_class_name, function_implementation))
+                                    i -= 1 #set i index to character before '}'
+                                potential_class_name = ''
+                        else:
+                            potential_class_name = ''
+                i += 1
         return list_of_js_functions
 
 

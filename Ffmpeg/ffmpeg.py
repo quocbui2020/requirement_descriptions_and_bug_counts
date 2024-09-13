@@ -871,7 +871,8 @@ def insert_ffmpeg_functions(prev_file_index, curr_file_index):
             list_of_prev_commit_functions = extract_function_names_and_implementations_c_code(';' + remove_comments_c_file(get_c_file_content(prev_file_index)))
             list_of_current_commit_functions = extract_function_names_and_implementations_c_code(';' + remove_comments_c_file(get_c_file_content(curr_file_index)))
 
-            # Create dictionaries to hold function implementations
+            # Remove all space character and Create dictionaries to hold function implementations
+            # Does this dictionary ensure no duplicate 'name'? Need to handle case if 'name' are dup
             prev_commit_functions = {name: re.sub(r'\s+', '', impl) for name, impl in list_of_prev_commit_functions}
             current_commit_functions = {name: re.sub(r'\s+', '', impl) for name, impl in list_of_current_commit_functions}
 
