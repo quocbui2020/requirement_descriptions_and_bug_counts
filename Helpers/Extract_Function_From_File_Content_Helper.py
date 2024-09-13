@@ -351,34 +351,44 @@ class ExtractFunctionFromFileContentHelper:
         return self.remove_comments(file_type='js', content=content)
     
     def extract_js_functions(self, content):
-        list_of_js_functions = []
+        # https://chatgpt.com/c/66df6725-ebdc-8004-b19f-49ba538b0d22
 
         content = self.remove_js_comments(content)
 
-        # Regular expression patterns for matching function declarations
-        function_patterns = [
+        list_of_js_functions = []
+        # Define individual regular expression patterns for matching function declarations
+        patterns = [
             # Match standard function declarations: function functionName(...) {...}
-            r'function\s+(\w+)\s*\([^)]*\)\s*\{[^}]*\}',
-            
-            # Match function expressions (anonymous or named): var/let/const functionName = function(...) {...}
-            r'(?:var|let|const)\s+(\w+)\s*=\s*function\s*\([^)]*\)\s*\{[^}]*\}',
+            r'function\s+(\w+)\s*\([^)]*\)\s*\{([^}]*)\}',
+
+            # Match function expressions: var/let/const functionName = function(...) {...}
+            r'(?:var|let|const)\s+(\w+)\s*=\s*function\s*\([^)]*\)\s*\{([^}]*)\}',
 
             # Match arrow functions: const functionName = (...) => {...}
-            r'(?:var|let|const)\s+(\w+)\s*=\s*\([^)]*\)\s*=>\s*\{[^}]*\}',
+            r'(?:var|let|const)\s+(\w+)\s*=\s*\([^)]*\)\s*=>\s*\{([^}]*)\}',
         ]
 
-        # Compile a regex pattern that matches any of the function patterns
-        combined_pattern = '|'.join(function_patterns)
+        bracket_tracker = {
+                "missing_closed_curly_brackets": 0,
+                "missing_closed_squared_brackets": 0,
+                "missing_closed_parentheses": 0,
+                "missing_single_quote": False,
+                "missing_double_quote": False,
+            }
         
-        # Find all matches using the combined pattern
-        matches = re.findall(combined_pattern, content)
+        # Iterate over each pattern and find matches
+        for pattern in patterns:
+            # Extract function names and implementations using the current pattern
+            matches = re.findall(pattern, content, flags=re.DOTALL | re.MULTILINE)
+            
+            # For each match, store the function name and implementation
+            for match in matches:
+                function_name, function_body = match
+                list_of_js_functions.append((
+                    function_name,
+                    function_body.strip()  # Remove extra spaces
+                ))
         
-        # Extract all function implementations
-        functions = re.findall(combined_pattern.replace(r'(\w+)', r'(\w+)([^}]+\})'), content)
-
-        # Create a list of function names and implementations
-        list_of_js_functions = [{'name': match[0], 'implementation': match[1].strip()} for match in functions]
-
         return list_of_js_functions
 
 
