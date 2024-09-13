@@ -76,7 +76,9 @@ save_changeset_parent_child_hashes_query = '''
 save_commit_file_query = '''
     MERGE [dbo].[Bugzilla_Mozilla_Changeset_Files] AS target
     USING (SELECT ? AS Changeset_Hash_ID, ? AS Previous_File_Name, ? AS Updated_File_Name) AS source
-    ON (target.Changeset_Hash_ID = source.Changeset_Hash_ID
+    ON (
+    -- The uniqueness of each record is the combination of [Changeset_Hash_ID], [Previous_File_Name], and [Updated_File_Name]:
+    target.Changeset_Hash_ID = source.Changeset_Hash_ID
         AND target.Previous_File_Name = source.Previous_File_Name
         AND target.Updated_File_Name = source.Updated_File_Name)
     WHEN NOT MATCHED THEN
