@@ -325,11 +325,7 @@ class ExtractFunctionFromFileContentHelper:
 
                         # Detect 'function' or 'async' keywords or '(...)' pattern:
                         if i+8 < tracker['last_char_index'] and ((content[i:i+8] == 'function' and not content[i+8].isalpha()) or (content[i:i+5] == 'async' and not content[i+5].isalpha()) or content[i] == '('):
-                            # TODO: Need to modify the code to detect let/const function_name = (...) => {...} and let/const function_name = async (...) => {...}. Note that, there is a similar pattern let/const var_name = (tuple), which is not a function
-                            # let/const function_name = function(...) {...}
-                            # let/const function_name = (...) => {...}
-                            # let/const function_name = async (...) => {...}
-
+                            # The flag to track the case when it could be a tuple, not a function like: `let tuple_name = (...);`
                             could_be_tuple = None
 
                             # keyword 'fucntion' and 'async' garantee they are function:

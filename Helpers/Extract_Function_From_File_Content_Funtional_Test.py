@@ -4428,8 +4428,13 @@ function makeAttachment(opts = {}) {
 }
 '''
         
-        javascript_content_4 = js_content = '''
+        javascript_content_4 = '''
 let tuple = (1,2,'3')
+
+# Immediately Invoked Function Expression (IIFE):
+(function(parameters) {
+    Function body
+})();
 
 const func_name1 = (params) => {
    Function body
@@ -4476,7 +4481,7 @@ function *func_name7(parameters) {
         # content_without_comments = helper.remove_js_comments(javascript_content_1)
         # print(content_without_comments)
 
-        result = helper.extract_js_functions(javascript_content_2)
+        result = helper.extract_js_functions(javascript_content_4)
         self.print_result(result)
 
 
