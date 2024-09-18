@@ -5,9 +5,12 @@ helper = ExtractFunctionContent.ExtractFunctionFromFileContentHelper()
 
 class ExtractFunctionTest(unittest.TestCase):
     def print_result(self, result):
-        for e in result:
-            print(f"\nFunction: {e[0]}\n{e[1]}\n") # Print function signature and function implementations
-            # print(f"\nFunction: {e[0]}\n") # Print only function signature
+        for item in result:
+            ## Print only function signature:
+            # print(f"\nFunction: {item[0].encode('utf-8', 'ignore').decode('utf-8')}\n")
+
+            # Print function signature and function implementations:
+            print(f"\nFunction: {item[0].encode('utf-8', 'ignore').decode('utf-8')}\n{item[1].encode('utf-8', 'ignore').decode('utf-8')}\n")
 
     ### Test function for 'extract_python_functions' ###
     def test_extract_python_functions(self):
@@ -4424,11 +4427,56 @@ function makeAttachment(opts = {}) {
   return attachment;
 }
 '''
+        
+        javascript_content_4 = js_content = '''
+let tuple = (1,2,'3')
+
+const func_name1 = (params) => {
+   Function body
+}
+    
+let func_name2 = async (parameters) => {
+    Function body
+};
+
+const func_name3 = function(parameters) {
+    Function body
+};
+
+let var = '{{}}'
+
+let func_name4 = function(parameters) {
+    Function body
+};
+
+// Comment 1
+/* 
+Comment 2 
+Comment 3
+*/
+
+function func_name5() {
+    statement;
+    "function name(){a}'` "
+    `}}}{{}}`
+}
+
+async function    func_name6 /* Comment 4 */ (parameters) {
+    statement;
+    statement;
+}
+
+function *func_name7(parameters) {
+    Function body
+}
+
+'''
+
         # Test remove_js_comments function:
         # content_without_comments = helper.remove_js_comments(javascript_content_1)
         # print(content_without_comments)
 
-        result = helper.extract_js_functions(javascript_content_1)
+        result = helper.extract_js_functions(javascript_content_2)
         self.print_result(result)
 
 
