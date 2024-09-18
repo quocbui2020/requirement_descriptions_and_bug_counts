@@ -19,7 +19,6 @@ class ExtractFunctionFromFileContentHelper:
     ##########################################
     ################# PYTHON #################
     ##########################################
-
     def remove_python_comments(self, content):
         """
         Remove all Python comments from the given content.
@@ -30,20 +29,8 @@ class ExtractFunctionFromFileContentHelper:
         Returns:
         str: The content without comments.
         """
-
-        # Pattern to match single-line comments
-        single_line_comment_pattern = r'#.*' # .*: zero or more of any characters (EXCEPT end line terminator '\n')
         
-        # Pattern to match multi-line strings/comments
-        multi_line_comment_pattern = r'\'\'\'[\s\S]*?\'\'\'|\"\"\"[\s\S]*?\"\"\"'   # \s: white space char; \S: non-white space char; |: or;
-        
-        # First remove multi-line comments
-        content = re.sub(multi_line_comment_pattern, '', content)
-        
-        # Then remove single-line comments
-        content = re.sub(single_line_comment_pattern, '', content)
-        
-        return content
+        return self.remove_comments(file_type='py', content=content)
     
     def extract_python_functions(self, content):
         """
@@ -53,7 +40,7 @@ class ExtractFunctionFromFileContentHelper:
         content (str): The content of the file as a string.
         
         Returns:
-        list: A list of tuples where each tuple contains the function name and entire function.
+        list: A list of tuples where each tuple contains the function name and entire function implementation.
         """
         list_of_functions = []
 
@@ -178,71 +165,453 @@ class ExtractFunctionFromFileContentHelper:
         return list_of_functions
 
 
-
-
     ##########################################
     ################## C++ ###################
     ##########################################
-
-    def remove_cpp_comments(content):
-        return
-    def extract_cpp_functions(content):
-        list_of_cpp_functions = []
-        #TODO: finished it
-
-        return list_of_cpp_functions
+    # https://chatgpt.com/c/66dbc955-4f44-8004-beaf-3eb303f23477
+    def remove_cpp_comments(self, content):
+        """
+        Remove all C++ comments from the given content.
+        
+        Parameters:
+        content (str): The content of the file as a string.
+        
+        Returns:
+        str: The content without comments.
+        """
+        
+        return self.remove_comments(file_type='cpp', content=content)
+    
+    def extract_cpp_functions(self, content):
+        """
+        Extract all C++ functions.
+        
+        Parameters:
+        content (str): The content of the file as a string.
+        
+        Returns:
+        list: A list of tuples where each tuple contains the function name and entire function implementation.
+        """
+        content = "; \n" + self.remove_cpp_comments(content)
+        
+        return self.extract_functions_from_c_relatives(content)
     
 
     ##########################################
     ################### C ####################
     ##########################################
-
-    def remove_c_comments(content):
-        return
-    def extract_c_functions(content):
-        list_of_c_functions = []
-        #TODO: finished it. Copy over the code from FFmpeg project.
-
-        return list_of_c_functions
+    # https://chatgpt.com/c/66dbc9d9-2b38-8004-9d53-90a97cb6d9b8
+    def remove_c_comments(self, content):
+        """
+        Remove all C comments from the given content.
+        
+        Parameters:
+        content (str): The content of the file as a string.
+        
+        Returns:
+        str: The content without comments.
+        """
+        
+        return self.remove_comments(file_type='c', content=content)
+    
+    def extract_c_functions(self, content):
+        """
+        Extract all C functions.
+        
+        Parameters:
+        content (str): The content of the file as a string.
+        
+        Returns:
+        list: A list of tuples where each tuple contains the function name and entire function implementation.
+        """
+        content = "; \n" + self.remove_c_comments(content)
+        
+        return self.extract_functions_from_c_relatives(content)
 
 
     ##########################################
     ############### JavaScript ###############
     ##########################################
+    def remove_js_comments(self, content):
+        """
+        Remove all JavaScript comments from the given content.
+        
+        Parameters:
+        content (str): The content of the file as a string.
+        
+        Returns:
+        str: The content without comments.
+        """
+        
+        return self.remove_comments(file_type='js', content=content)
+    
+    def extract_js_functions(self, content):
+        # https://chatgpt.com/c/66dbc9d9-2b38-8004-9d53-90a97cb6d9b8
 
-    def remove_js_comments(content):
-        return
-    def extract_js_functions(content):
+        content = self.remove_js_comments(content)
+        
+        # The function to determine if we are inside a string or not:
+        def is_inside_string():
+            if content[i] in {'`', '"', "'"}:
+                # Case we're not already inside a string, enter one:
+                if tracker['inside_string'] == False:
+                    tracker['inside_string'] = True
+                    tracker['string_delimiter'] = content[i]
+                    return True
+                # Case we're already inside a string and hit the character indicates the end of string:
+                elif content[i] == tracker['string_delimiter']: # and content[i-1] != '\\': # Make sure it's not escaped (I don't think this condition is necessary)
+                    tracker['inside_string'] = False
+                    tracker['string_delimiter'] = ''
+                    return False
+            else:
+                return tracker['inside_string']
+
+        tracker = {
+            "missing_closed_curly_brackets": 0,
+            "missing_closed_squared_brackets": 0,
+            "missing_closed_parentheses": 0,
+            "missing_single_quote": False,
+            "missing_double_quote": False,
+            "begin_new_line_index": -1,
+            "potential_begin_function_index": -1,
+            "inside_string": False,
+            "string_delimiter": '',
+            "last_char_index": len(content) - 1,
+        }
+        
+        function_signature = ''
+        function_implementation = ''
         list_of_js_functions = []
-        #TODO: finished it
 
+        i = 0
+        while i <= tracker['last_char_index']:
+            if not is_inside_string():
+                # Case we if character is '\n':
+                if content[i] == '\n':
+                    tracker['begin_new_line_index'] = i
+
+                ## Handle cases:
+                # let/const function_name = function(...) {...}
+                # let/const function_name = async function(...) => {...}
+                # let/const function_name = async (...) => {...}
+                # let/const function_name = (...) => {...}
+                elif content[i] in {'c', 'l'} and i-1 != -1 and (content[i-1] in {' ', '\n'}) and i+6 < tracker['last_char_index']:
+                    if content[i:i+6] == 'const ' or content[i:i+4] == 'let ':
+                        # Detect let or const
+                        tracker['potential_begin_function_index'] = i
+
+                        # Skip past 'const' or 'let'
+                        i = i+6 if content[i:i+6] == 'const ' else i+4 
+
+                        # Skip spaces after 'const' or 'let'
+                        while i <= tracker['last_char_index'] and content[i] == ' ':
+                            i += 1
+
+                        # Detect the variable (function name)
+                        func_name_start = i
+                        while i <= tracker['last_char_index'] and (content[i].isalnum() or content[i] == '_'):
+                            i += 1
+                        func_name_end = i
+                        function_name = content[func_name_start:func_name_end]
+
+                        # Skip to the equal sign '='
+                        while i <= tracker['last_char_index'] and content[i] != '=':
+                            i += 1
+                        i += 1  # Skip '='
+
+                        # Skip spaces after '='
+                        while i <= tracker['last_char_index'] and content[i] == ' ':
+                            i += 1
+
+                        # Detect 'function' or 'async' keywords or '(...)' pattern:
+                        if i+8 < tracker['last_char_index'] and ((content[i:i+8] == 'function' and not content[i+8].isalpha()) or (content[i:i+5] == 'async' and not content[i+5].isalpha()) or content[i] == '('):
+                            # The flag to track the case when it could be a tuple, not a function like: `let tuple_name = (...);`
+                            could_be_tuple = None
+
+                            # keyword 'fucntion' and 'async' garantee they are function:
+                            if content[i:i+8] == 'function':
+                                i += 8  # Skip 'function'
+                            elif content[i:i+5] == 'async':
+                                i += 5  # Skip 'async'
+                            elif content[i] == '(':
+                                # Could be just `let tuple = (...)`, instead of `let func_name = (...) => {...}`
+                                could_be_tuple = True
+
+                            # Skip to the opening parenthesis '('. There could be spacing in between:
+                            while i <= tracker['last_char_index'] and content[i] != '(':
+                                i += 1
+
+                            # Track parentheses to extract the full signature
+                            if content[i] == '(':
+                                tracker['missing_closed_parentheses'] += 1
+
+                            # Find the full function signature (including parameters)
+                            param_start = i
+                            while i <= tracker['last_char_index'] and tracker['missing_closed_parentheses'] > 0:
+                                i += 1
+                                # Assuming something, the parameters have string in it, so better have `is_inside_string()` here:
+                                if not is_inside_string():
+                                    if content[i] == '(' and not is_inside_string():
+                                        tracker['missing_closed_parentheses'] += 1
+                                    elif content[i] == ')' and not is_inside_string():
+                                        tracker['missing_closed_parentheses'] -= 1
+
+                            func_signature_end = i + 1
+                            function_signature = content[tracker['potential_begin_function_index']:func_signature_end]
+
+                            # Check for '=>' to confirm the case `let/const func_name = (...) => {...}`, not the tuple
+                            while could_be_tuple and i <= tracker['last_char_index']:
+                                i += 1
+                                if (content[i] not in {' ', '\n'} and content [i:i+2] != '=>') or content[i] == '{':
+                                    # We confirm that this is just a tuple, not a function. No need to continue
+                                    i -= 1 # Move back one character
+                                    break
+                                elif content[i:i+2] == '=>':
+                                    # We confirm that this is a function, not tuple.
+                                    could_be_tuple = False
+                                    break
+
+                            if not could_be_tuple:
+                                # Skip to the opening curly brace '{'.
+                                while i <= tracker['last_char_index'] and content[i] != '{':
+                                    i += 1
+
+                                # Track curly braces to extract the full implementation
+                                function_start = tracker['potential_begin_function_index']  # Start of function
+                                while i <= tracker['last_char_index']:
+                                    char = content[i]
+                                    if not is_inside_string():
+                                        if char == '{':
+                                            tracker['missing_closed_curly_brackets'] += 1
+                                        elif char == '}':
+                                            tracker['missing_closed_curly_brackets'] -= 1
+                                            if tracker['missing_closed_curly_brackets'] == 0:
+                                                function_end = i + 1
+                                                function_implementation = content[function_start:function_end]
+                                                list_of_js_functions.append((function_signature, function_implementation))
+
+                                                # Reset flags
+                                                tracker['potential_begin_function_index'] = -1
+                                                break
+                                    i += 1
+
+                                else:
+                                    # Reset the flag:
+                                    tracker['potential_begin_function_index'] = -1
+
+                        else:
+                            is_inside_string()
+
+                            # Reset flags:
+                            tracker['potential_begin_function_index'] = -1
+
+                ## Handle cases:
+                # function function_name(...) {...}
+                # function* function_name(...) {...}
+                # asyn function function_name(...) {...}
+                elif content[i] == 'f' and i-1 != -1 and (content[i-1] in {' ', '\n'}) and i+9 < tracker['last_char_index'] and (content[i:i+9] == 'function ' or content[i:i+9] == 'function*'):
+                    tracker['potential_begin_function_index'] = i
+
+                    # Check to see if we have 'async' keyword before 'function', then we update the flag 'potential_begin_function_index' to include 'async':
+                    j = i-1
+                    while j > 4:
+                        if content[j] == 'c' and content[j-4:j+1] == 'async' and (j-5 == -1 or content[j-5] in {'\n', ' '}):
+                            tracker['potential_begin_function_index'] = j-4
+                            break
+                        elif content[j] != ' ':
+                            break
+                        j -= 1
+
+                    # Skip past the "function " keyword
+                    i += 9
+
+                    # Detect the function name
+                    func_name_start = None
+                    func_name_end = None
+                    while i <= tracker['last_char_index'] and (content[i] == ' ' or content[i] == '*'):
+                        i += 1  # Skip spaces to get to the function name
+
+                    # Iterate through each char in function name:
+                    if i <= tracker['last_char_index'] and (content[i].isalpha() or content[i] == '_'):  # Function name start
+                        func_name_start = i
+                        while i <= tracker['last_char_index'] and (content[i].isalnum() or content[i] == '_'):
+                            i += 1
+                        func_name_end = i
+
+                    function_name = content[func_name_start:func_name_end]
+
+                    # Skip to the opening parenthesis '('
+                    while i <= tracker['last_char_index'] and content[i] != '(':
+                        i += 1
+
+                    # Now we're at the start of the parameters list
+                    param_start = i
+
+                    # Track the parentheses to extract the full signature
+                    if content[i] == '(':
+                        tracker['missing_closed_parentheses'] += 1
+
+                    # Find the full function signature (including parameters)
+                    while i <= tracker['last_char_index'] and tracker['missing_closed_parentheses'] > 0:
+                        i += 1
+                        if content[i] == '(':
+                            tracker['missing_closed_parentheses'] += 1
+                        elif content[i] == ')':
+                            tracker['missing_closed_parentheses'] -= 1
+
+                    # Function signature (ends after the closing ')')
+                    func_signature_end = i + 1
+                    function_signature = content[tracker['potential_begin_function_index']:func_signature_end]
+
+                    # Skip to the opening curly brace '{'
+                    while i <= tracker['last_char_index'] and content[i] != '{':
+                        i += 1
+
+                    function_start = tracker['potential_begin_function_index']  # Start of function (from 'function')
+                    while i <= tracker['last_char_index']:
+                        char = content[i]
+                        if not is_inside_string():
+                            if char == '{':
+                                tracker['missing_closed_curly_brackets'] += 1
+                            elif char == '}':
+                                tracker['missing_closed_curly_brackets'] -= 1
+                                if tracker['missing_closed_curly_brackets'] == 0:
+                                    # We reached the end of the function
+                                    function_end = i + 1
+                                    function_implementation = content[function_start:function_end]
+                                    list_of_js_functions.append((function_signature, function_implementation))
+
+                                    # Reset flags:
+                                    tracker['potential_begin_function_index'] = -1
+                                    break
+                        i += 1
+                else:
+                    pass
+
+            i += 1
         return list_of_js_functions
 
-##########################################
-##########################################
-# Testing area/Unit Tests:
-if __name__ == '__main__':
-    response = requests.get(f"https://hg.mozilla.org/mozilla-central/raw-file/000b7732d8f0996ab5c8e55a98514d592e9391d5/testing/web-platform/harness/wptrunner/browsers/firefox.py")
-    full_py_testing_content = '''
-    def functionA(arg_1,
-        arg_2):   
-        inside function A.
-            inside function A.
-        inside function A.
 
-    statement outside of the function.
+    ##########################################
+    ########### Helper Functions #############
+    ##########################################
+    def remove_comments(self, file_type, content):
+        match file_type:
+            case 'cpp' | 'c' | 'js':
+                # Problem: The regex above have issue because it remove the characters in http link as well since it is "https://.../"
+                # # Regular expression patterns to match C-style comments
+                # block_comment_pattern = re.compile(r'/\*.*?\*/', re.DOTALL)
+                # line_comment_pattern = re.compile(r'//.*?$' , re.MULTILINE)
+                # # Remove block comments
+                # content = re.sub(block_comment_pattern, '', content)
+                # # Remove line comments
+                # content = re.sub(line_comment_pattern, '', content)
+                
+                regex_patterns = re.compile(r'''((?:(?:^[ \t]*)?(?:\/\*[^*]*\*+(?:[^\/*][^*]*\*+)*\/(?:[ \t]*\r?\n(?=[ \t]*(?:\r?\n|\/\*|\/\/)))?|\/\/(?:[^\\]|\\(?:\r?\n)?)*?(?:\r?\n(?=[ \t]*(?:\r?\n|\/\*|\/\/))|(?=\r?\n))))+)|("(?:\\[\S\s]|[^"\\])*"|'(?:\\[\S\s]|[^'\\])*'|(?:\r?\n|[\S\s])[^\/"'\\\s]*)''', re.MULTILINE)
+                content = re.sub(regex_patterns, r'\2', content)
+            case 'py':
+                # Pattern to match single-line comments
+                single_line_comment_pattern = r'#.*' # .*: zero or more of any characters (EXCEPT end line terminator '\n')
+                
+                # Pattern to match multi-line strings/comments
+                multi_line_comment_pattern = r'\'\'\'[\s\S]*?\'\'\'|\"\"\"[\s\S]*?\"\"\"'   # \s: white space char; \S: non-white space char; |: or;
+                
+                # First remove multi-line comments
+                content = re.sub(multi_line_comment_pattern, '', content)
+                
+                # Then remove single-line comments
+                content = re.sub(single_line_comment_pattern, '', content)
+        
+        return content
 
-    def functionB(arg_1, arg_2):
-        inside function B.
+    def extract_functions_from_c_relatives(self, content):
+        """
+        Extract all functions from C relative languges: C, C++.
+        
+        Parameters:
+        content (str): The content of the file as a string. The content must not contains any comments.
+        
+        Returns:
+        list: A list of tuples where each tuple contains the function name and entire function implementation.
+        """
+        # TODO: Need to update the function to capture function signature instead of just function name because there could be overloading functions. C code doesn't support overloading, but C++ does.
 
-    class A:
-        def functionC(arg_1, arg_2):
-            inside function C.
+        list_of_c_functions = []
+        function_names = []
 
-    def functionD(arg_1, arg_2):
-        inside function D.
-    '''
+        ## Explain of the regex in 'function_pattern':
+        # (?: ...) : A non-capturing group that doesn't create a backreference.
+        # [^a-zA-Z0-9\s*\r\n\{\(] : Matches any single character that is not a letter (a-zA-Z), digit (0-9), whitespace (\s*), newline (\r\n), or the characters {, (, #, _.
+        # \s* : Matches zero or more spaces (whitespace).
+        # \w+ : Matches one or more word characters (letters, digits, or underscore).
+        # ([\w\s*]+) : Capturing group that matches one or more word characters (\w) or spaces (\s*).
+        # \( : Matches an opening parenthesis (.
+        # function_pattern = re.compile(r'(?:[^a-zA-Z0-9\s*\r\n\{\(#_])\s*\w+([\w\s*]+)\(')
+        function_pattern = re.compile(r'(?:[^a-zA-Z0-9\s*\r\n\{\(#_])\s*([\w\s*]+)\(') # Work best for 'file_content1' in unit test function 'test_extract_c_functions'
+        
+        parenthesis_count = 0
+        curly_bracket_count = 0
+        keyword = ''
+        implementation_start = 0
+        
+        def c_keywords():
+            return {
+                'if', 'else', 'while', 'for', 'do', 'switch', 'case', 'default',
+                'break', 'continue', 'return', 'goto'
+            }
+        
+        i = 0
+        while i < len(content):
+            if parenthesis_count == 0:
+                match = function_pattern.search(content, i)
+                if match:
+                    # Attempt to get the potential class name.
+                    match_group = match.group(1)
+                    # Break the content in match_group into words:
+                    match_group_words = re.findall(r'\b[a-zA-Z0-9_]+\b', match_group) # Regex explain: matches whole words that consist of alphanumeric characters and underscores.
+                    if match_group_words:
+                        # The last word is a potential class name:
+                        potential_class_name = match_group_words[-1]  # Get the last match as the function name
+                    else:
+                        potential_class_name = ''  # Set keyword to an empty string if no matches are found
 
-    helper = ExtractFunctionFromFileContentHelper()
-    response_text_without_comments = helper.remove_python_comments(response.text)
-    list_py_functions = helper.extract_python_functions(response_text_without_comments)
+                    i = match.end()  # Set i to the end of the matched pattern
+                    parenthesis_count += 1
+                    implementation_start = match.start(1)  # Start of function implementation
+                else:
+                    i += 1
+            else:
+                if content[i] == '(':
+                    parenthesis_count += 1
+                elif content[i] == ')':
+                    parenthesis_count -= 1
+                    if parenthesis_count == 0 and curly_bracket_count == 0 and potential_class_name:
+                        # Skip whitespace and check for '{'
+                        j = i + 1
+                        while j < len(content) and content[j] in ' \t\n\r':
+                            j += 1
+                        if j < len(content) and content[j] == '{':
+                            curly_bracket_count += 1
+                            i = j + 1  # Move i to the position right after '{'
+                            while i < len(content) and curly_bracket_count > 0:
+                                if content[i] == '{':
+                                    curly_bracket_count += 1
+                                elif content[i] == '}':
+                                    curly_bracket_count -= 1
+                                i += 1
+                            if curly_bracket_count == 0:
+                                i -= 1 # set i index back to '}' character
+                                function_implementation = content[implementation_start:i+1].strip()
+                                # 'potential_class_name' is potential class name, if it match with the keywords in c language, then do not consider it as a function name:
+                                if potential_class_name not in c_keywords():
+                                    function_names.append(potential_class_name)
+                                    list_of_c_functions.append((potential_class_name, function_implementation))
+                                    i -= 1 #set i index to character before '}'
+                                potential_class_name = ''
+                        else:
+                            potential_class_name = ''
+                i += 1
+        return list_of_c_functions
+
+### End of class [ExtractFunctionFromFileContentHelper]
+
