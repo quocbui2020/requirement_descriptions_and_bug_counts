@@ -755,7 +755,6 @@ def save_comment_changeset_properties(process_status, temp_comment_changesets_fo
                 
             cursor = conn.cursor()
 
-
             query_count = 0
             save_comment_changeset_properties_queries = ''
             params = []

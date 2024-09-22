@@ -89,7 +89,7 @@ class Mozilla_File_Function_Scraper:
         content (str): The content of the file as a string.
         
         Returns:
-        tuple: (process_statuses, list_of_functions_a, list_of_functions_b)
+        tuple: (overall_status, process_statuses, list_of_functions_a, list_of_functions_b)
         """
 
         attempt_number = 1
@@ -104,7 +104,7 @@ class Mozilla_File_Function_Scraper:
         mercurial_type_index = 0
         process_statuses = []
         file_extension = ''
-        overall_processs_status = ''
+        field_name = ['overall_status', 'process_statuses', 'list_of_functions_a', 'list_of_functions_b']
 
         try:
             while attempt_number <= max_retries:
@@ -112,7 +112,7 @@ class Mozilla_File_Function_Scraper:
 
                 # Extract file paths. Removed the first 2 characters ("a/" and "b/") from `previous_file_name` and `previous_file_name`:
                 file_path_a = db_mozilla_changeset_file.previous_file_name[2:] if "/dev/null" not in db_mozilla_changeset_file.previous_file_name else None
-                file_path_b = db_mozilla_changeset_file.previous_file_name[2:] if "/dev/null" not in db_mozilla_changeset_file.previous_file_name else None
+                file_path_b = db_mozilla_changeset_file.updated_file_name[2:] if "/dev/null" not in db_mozilla_changeset_file.updated_file_name else None
 
                 # Extract file extension from file path names:
                 if file_path_a:
@@ -157,13 +157,14 @@ class Mozilla_File_Function_Scraper:
                     mercurial_type_index += 1
 
                     # Switch to other mercurial type:
+                    # if incorrect mercurial type, we assumed status code is 404 for both a and b:
                     if mercurial_type_index < len(mercurial_type_list) and (response_status_code_a == 404 and response_status_code_b == 404):
                         process_statuses.append(f"404:{mercurial_type_list[mercurial_type_index-1]}")
                         pass
                     else:
                         break
 
-                # Case when status code other than 200 and 400
+                # Case when status code other than 200 and 400:
                 else: # Handle case when request returns status code other than `200` and `400`
                     print(f"Response code: [{str(response_status_code_a)}-{str(response_status_code_b)}].\nRetrying in 10 seconds...", end="", flush=True)
                     if attempt_number > max_retries:
@@ -184,11 +185,11 @@ class Mozilla_File_Function_Scraper:
             # Case reaching the maximum attempt web request, then we assume this records have not been processed yet.
             else:
                 process_statuses = []
-                return process_statuses
+                return namedtuple('WebRequestRecord', field_name)(*("network issue", process_statuses, None, None))
             
             # Exit the function in the case request url failed.
             if response_status_code_a == 404 or response_status_code_b == 404:
-                return (overall_processs_status, process_statuses, None, None, None)
+                return namedtuple('WebRequestRecord', field_name)(*("404", process_statuses, None, None))
 
 
             #######################################################################################
@@ -215,23 +216,96 @@ class Mozilla_File_Function_Scraper:
                     list_of_functions_b = function_extractor.extract_py_functions(response_b.text) if response_b else list_of_functions_b
                 case _: # Default case
                     process_statuses.append("Not js,c,cpp,py Files")
-                    return process_statuses
+                    return namedtuple('WebRequestRecord', field_name)(*("Incorrect file extension", process_statuses, None, None))
 
-            # TODO: Handle the case if the file has multiple similar function names:
+            # Handle the case if the file has multiple similar function names:
+            function_count_a = {}
+            function_count_b = {}
+            updated_list_of_functions_a = []
+            updated_list_of_functions_b = []
 
+            for name, implementation in list_of_functions_a:
+                # If the function name has been encountered before, increment the count
+                if name in function_count_a:
+                    function_count_a[name] += 1
+                    # Prepend the count to the function name
+                    updated_list_of_functions_a.append((f"{function_count_a[name]}-{name}", implementation))
+                else:
+                    # If first occurrence, initialize the count and use the original name
+                    function_count_a[name] = 1
+                    updated_list_of_functions_a.append((name, implementation))
             
+            for name, implementation in list_of_functions_b:
+                # If the function name has been encountered before, increment the count
+                if name in function_count_b:
+                    function_count_b[name] += 1
+                    # Prepend the count to the function name
+                    updated_list_of_functions_b.append((f"{function_count_b[name]}-{name}", implementation))
+                else:
+                    # If first occurrence, initialize the count and use the original name
+                    function_count_b[name] = 1
+                    updated_list_of_functions_b.append((name, implementation))
 
-
-            return (overall_processs_status, process_statuses, list_of_functions_a, list_of_functions_b)
-
-
+            return namedtuple('WebRequestRecord', field_name)(*("successful", process_statuses, list_of_functions_a, list_of_functions_b))
 
         except Exception as e:
-            # TODO: This is the overall exception.
-            return
+            # TODO: Quoc - ultimately we want to handle generic exception in the case that it doesn't cease the scraper
+            print(f"Error: {e}")
+            traceback.print_exc()
+            exit() # During code development, let exit() if encountered unknown exception
+            # return ("human intervention - genetic exception", process_statuses, None, None)
     
-    def save_bugzilla_mozilla_functions(self, db_mozilla_changeset_file, function_data):
-        pass
+    def save_bugzilla_mozilla_functions(self, db_mozilla_changeset_file, web_request_function_data):
+        attempt_number = 1
+        max_retries = 10 # max retry for deadlock issue.
+        max_connection_attempts = 10  # Number of max attempts to establish a connection.
+        
+        while attempt_number <= max_retries:
+            connection_attempt = 1
+
+            while connection_attempt <= max_connection_attempts:
+                try:
+                    conn = pyodbc.connect(conn_str)
+                    break
+                except pyodbc.Error as conn_err:
+                    if conn_err.args[0] in ['08S01']: # The connection is broken and recovery is not possible.
+                        connection_attempt += 1
+                        print(f"08S01.\nConnection attempt {connection_attempt} failed. Retrying in 5 seconds...", end="", flush=True)
+                        time.sleep(5)
+                    else:
+                        raise conn_err
+            else:
+                raise Exception("Failed to establish a connection after multiple attempts.")
+            
+            cursor = conn.cursor()
+
+            # TODO: Prepare data for insertion
+            insert_func_signature = ''
+            insert_func_status = ''
+            dict_of_functions_a = {}
+            dict_of_functions_b = {}
+
+            # Remove all spacing, new lines characters:
+            if web_request_function_data.list_of_functions_a:
+                dict_of_functions_a = {func_sign: re.sub(r'\s+', '', func_impl) for func_sign, func_impl in web_request_function_data.list_of_functions_a}
+            if web_request_function_data.list_of_functions_b:
+                dict_of_functions_b = {func_sign: re.sub(r'\s+', '', func_impl) for func_sign, func_impl in web_request_function_data.list_of_functions_b}
+
+            if "/dev/null" in db_mozilla_changeset_file.previous_file_name:
+                insert_func_status = "added"
+            elif "/dev/null" in db_mozilla_changeset_file.updated_file_name:
+                insert_func_status = "removed"
+
+            params.extend('''
+                INSERT INTO [dbo].[Bugzilla_Mozilla_Functions]
+                    ([Function_Signature]
+                    ,[Function_Status]
+                    ,[Inserted_On])
+                VALUE
+                    (?, ?, ?, GETUTCDATE())
+                ''',
+                [func_signature, insert_func_status])
+            # TODO: How do handle if it can't insert because of duplicate PK. We don't want it to stop the craper
 
     def run_scraper(self, task_group, start_row, end_row):
         records_to_be_processed = self.get_records_to_process(task_group, start_row, end_row)
@@ -248,7 +322,10 @@ class Mozilla_File_Function_Scraper:
                          'previous_file_name', 'updated_file_name', 'file_status',
                          'mercurial_type', 'child_hash'])(*records_to_be_processed[i])
 
-                function_data = self.scrap_mozilla_function_data(db_mozilla_changeset_file)
+                web_request_function_data = self.scrap_mozilla_function_data(db_mozilla_changeset_file)
+
+                if web_request_function_data.overall_status == "successful":
+                    self.save_bugzilla_mozilla_functions(db_mozilla_changeset_file, web_request_function_data)
 
 
 

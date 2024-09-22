@@ -301,7 +301,7 @@ class ExtractFunctionFromFileContentHelper:
                         tracker['potential_begin_function_index'] = i
 
                         # Skip past 'const' or 'let'
-                        i = i+6 if content[i:i+6] == 'const ' else i+4 
+                        i = i+6 if content[i:i+6] == 'const ' else i+4
 
                         # Skip spaces after 'const' or 'let'
                         while i <= tracker['last_char_index'] and content[i] == ' ':
