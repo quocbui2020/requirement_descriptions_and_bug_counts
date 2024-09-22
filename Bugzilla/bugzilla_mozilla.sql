@@ -430,6 +430,50 @@ order by total desc;
 select * from Temp_Comment_Changesets_For_Process
 where Q2_Hash_Id is not null
 order by Q1_Hash_ID;
+
+
+
+--------------------------------------------------
+--------------------------------------------------
+/* Divide the [Bugzilla_Mozilla_Changeset_Files] into the task group and row numbers for processing later. */
+--------------------------------------------------
+--------------------------------------------------
+SELECT cf.Changeset_Hash_ID
+	,cf.Previous_File_Name
+	,cf.Updated_File_Name
+	,cf.File_Status
+	,c.Mercurial_Type
+	,c.Child_Hashes
+FROM Bugzilla_Mozilla_Changeset_Files cf
+INNER JOIN Bugzilla_Mozilla_Changesets c ON c.Hash_Id = cf.Changeset_Hash_ID
+WHERE
+(
+	(
+		cf.Previous_File_Name LIKE '%.js'
+		OR cf.Previous_File_Name LIKE '%.py'
+		OR cf.Previous_File_Name LIKE '%.c'
+		OR cf.Previous_File_Name LIKE '%.cpp'
+	)
+	OR 
+	(
+		cf.Updated_File_Name LIKE '%.js'
+		OR cf.Updated_File_Name LIKE '%.py'
+		OR cf.Updated_File_Name LIKE '%.c'
+		OR cf.Updated_File_Name LIKE '%.cpp'
+	)
+)
+AND c.Child_Hashes not like '%|%' -- Ensure the changesets have only one child hash
+AND
+(
+	Is_Backed_Out_Changeset=1
+	or Backed_Out_By is not null
+	or Backout_Hashes is not null
+)
+
+
+
+
+
 ----------------------------------------------------------------------------------------------
 ----------------------------------------------------------------------------------------------
 /* WORKING AREA */
