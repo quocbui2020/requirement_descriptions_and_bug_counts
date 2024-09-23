@@ -257,12 +257,11 @@ class Mozilla_File_Function_Scraper:
     
     def save_bugzilla_mozilla_functions(self, db_mozilla_changeset_file, web_request_function_data):
         attempt_number = 1
-        max_retries = 10 # max retry for deadlock issue.
+        max_retries = 10 # max retry for database issue.
         max_connection_attempts = 10  # Number of max attempts to establish a connection.
         
         while attempt_number <= max_retries:
             connection_attempt = 1
-
             while connection_attempt <= max_connection_attempts:
                 try:
                     conn = pyodbc.connect(conn_str)
@@ -280,32 +279,123 @@ class Mozilla_File_Function_Scraper:
             cursor = conn.cursor()
 
             # TODO: Prepare data for insertion
-            insert_func_signature = ''
-            insert_func_status = ''
+            # Reminder: dictionary can be used to access value by key: dictionary[key] => value
             dict_of_functions_a = {}
             dict_of_functions_b = {}
 
-            # Remove all spacing, new lines characters:
-            if web_request_function_data.list_of_functions_a:
-                dict_of_functions_a = {func_sign: re.sub(r'\s+', '', func_impl) for func_sign, func_impl in web_request_function_data.list_of_functions_a}
-            if web_request_function_data.list_of_functions_b:
-                dict_of_functions_b = {func_sign: re.sub(r'\s+', '', func_impl) for func_sign, func_impl in web_request_function_data.list_of_functions_b}
+            # Containers used for saving to database:
+            deleted_function_list = []
+            added_function_list = []
+            modified_function_list = []
+            unchanged_function_list = []
+            
+            try:
+                # Remove all spacings, new lines characters:
+                if web_request_function_data.list_of_functions_a:
+                    dict_of_functions_a = {func_sign: re.sub(r'\s+', '', func_impl) for func_sign, func_impl in web_request_function_data.list_of_functions_a}
+                if web_request_function_data.list_of_functions_b:
+                    dict_of_functions_b = {func_sign: re.sub(r'\s+', '', func_impl) for func_sign, func_impl in web_request_function_data.list_of_functions_b}
 
-            if "/dev/null" in db_mozilla_changeset_file.previous_file_name:
-                insert_func_status = "added"
-            elif "/dev/null" in db_mozilla_changeset_file.updated_file_name:
-                insert_func_status = "removed"
+                if "/dev/null" not in db_mozilla_changeset_file.previous_file_name or "/dev/null" not in db_mozilla_changeset_file.updated_file_name:
+                    for name, prev_implementation in dict_of_functions_a.items():
+                        # If we found the name of function a list in the function b list, and the current implementation for both are not matched, then it is modified:
+                        if name in dict_of_functions_b:
+                            current_implementation = dict_of_functions_b[name]
+                            if prev_implementation != current_implementation:
+                                modified_function_list.append(name) # modified
+                            else:
+                                unchanged_function_list.append(name)    # unchanged
 
-            params.extend('''
-                INSERT INTO [dbo].[Bugzilla_Mozilla_Functions]
-                    ([Function_Signature]
-                    ,[Function_Status]
-                    ,[Inserted_On])
-                VALUE
-                    (?, ?, ?, GETUTCDATE())
-                ''',
-                [func_signature, insert_func_status])
-            # TODO: How do handle if it can't insert because of duplicate PK. We don't want it to stop the craper
+                            del dict_of_functions_b[name]   # Remove each element from dictionary after complete processed.
+                        else:
+                            deleted_function_list.append(name)  # deleted
+
+                    # After the loop finished, any remaining elements in 'b' are considered 'added':
+                    added_function_list = list(dict_of_functions_b.keys())
+
+                else:
+                    # If the file is 'deleted' or newly 'added', then all the functions should have the status of "deleted" or "added":
+                    if "/dev/null" in db_mozilla_changeset_file.previous_file_name:
+                        added_function_list = list(dict_of_functions_b.keys())
+                    elif "/dev/null" in db_mozilla_changeset_file.updated_file_name:
+                        deleted_function_list = list(dict_of_functions_a.keys())
+
+                ## Prepare the query batches to save to the database:
+                # Variables to query database:
+                params = []
+                batches = []
+                db_queries = ''
+                query_count = 0
+                query_size_limit = 100
+                def check_batch_limit():
+                    nonlocal db_queries, params, query_count # Note: `nonlocal` keyword refers the function to use the variables outside of its function, not the local variables inside itself.
+                    if query_count >= query_size_limit:
+                        batches.append((db_queries, list(params))) # Use list() to copy `params` to avoid 'Mutable Variables Issue' when the `params` resets since they share same reference.
+                        params = []    # Reset params for next batch
+                        db_queries = ''  # Reset db_queries for the next batch
+                        query_count = 0  # Reset query count
+
+                insert_function_query = '''INSERT INTO [dbo].[Bugzilla_Mozilla_Functions] ([Function_Signature],[Function_Status],[Inserted_On]) VALUES (?, ?, GETUTCDATE());'''
+                for func_sign in added_function_list:
+                    db_queries += insert_function_query
+                    params.extend([func_sign, "added"])
+                    query_count += 1
+                    check_batch_limit()
+                for func_sign in deleted_function_list:
+                    db_queries += insert_function_query
+                    params.extend([func_sign, "deleted"])
+                    query_count += 1
+                    check_batch_limit()
+                for func_sign in modified_function_list:
+                    db_queries += insert_function_query
+                    params.extend([func_sign, "modified"])
+                    query_count += 1
+                    check_batch_limit()
+                for func_sign in unchanged_function_list:
+                    db_queries += insert_function_query
+                    params.extend([func_sign, "unchanged"])
+                    query_count += 1
+                    check_batch_limit()
+                
+                # Prepare query to update the process status in `Bugzilla_Mozilla_Changeset_Files`:
+                update_process_statuses = " | ".join(web_request_function_data.process_statuses) if web_request_function_data.process_statuses else None
+                db_queries += '''UPDATE [Bugzilla_Mozilla_Changeset_Files] SET [Process_Status] = ? WHERE [Task_Group] = ? AND [Row_Num] = ?;'''
+                params.extend([update_process_statuses, db_mozilla_changeset_file.task_group, db_mozilla_changeset_file.row_num])
+
+                # Add any remaining queries to the last batch:
+                if db_queries:
+                    batches.append((db_queries, params))
+                    
+                # Start transactions:
+                cursor.execute("BEGIN TRANSACTION")
+
+                # Execute batches of queries
+                for batch_query, batch_params in batches:
+                    cursor.execute(batch_query, batch_params)
+
+                # Commit the transaction
+                cursor.execute("COMMIT")
+                conn.commit()
+
+            except pyodbc.Error as e:
+                error_code = e.args[0]
+                cursor.execute("ROLLBACK TRANSACTION")  # Rollback transaction
+                conn.rollback()  # Ensure the rollback is completed
+
+                attempt_number += 1
+                print(f"pyodbc.Error.\nAttempt number: {attempt_number}. Retrying in 10 seconds...", end="", flush=True)
+                time.sleep(10)
+
+                if attempt_number >= max_retries:
+                    print(f"Max attempt reached. Skipped", end="", flush=True)
+                    continue
+            
+            finally:
+                # Close the cursor and connection
+                cursor.close()
+                conn.close()
+
+            # TODO: Handle error: if it can't insert because of duplicate PK. We don't want it to stop the craper
 
     def run_scraper(self, task_group, start_row, end_row):
         records_to_be_processed = self.get_records_to_process(task_group, start_row, end_row)

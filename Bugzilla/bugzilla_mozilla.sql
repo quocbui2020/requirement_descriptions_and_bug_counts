@@ -17,13 +17,6 @@ Potential improvement of the crawlers:
 3. Add ticket open datetime.
 */
 
-/*
-Current max bug id at 6/9/2024: 1,901,449
-Crawler 1: from 0 to 475,362 (Offset: 0 - 464886)
-Crawler 2: from 475,363 to 950,725 (Offset: 464887 - 887441)
-Crawler 3: from 950,726 to 1,426,088 (Offset: 887442 - 1316182)
-Crawler 4: from 1,426,089 to The End (Offset: 1316183 - End)
-*/
 --Good example of a specific bugzilla:
 select * from Bugzilla where id='1507218';
 
