@@ -1,3 +1,5 @@
+import sys
+import os
 import traceback
 import time
 import requests
@@ -7,7 +9,8 @@ import argparse
 from time import strftime, localtime
 from datetime import datetime
 from collections import namedtuple
-from requirement_descriptions_and_bug_counts.Helpers import Extract_Function_From_File_Content_Helper as ExtractFunctionHelper
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
+from Helpers import Extract_Function_From_File_Content_Helper as ExtractFunctionHelper
 
 # Connection string
 conn_str = 'DRIVER={ODBC Driver 18 for SQL Server};' \
@@ -32,7 +35,6 @@ class Mozilla_File_Function_Scraper:
             try:
                 conn = pyodbc.connect(conn_str)
                 cursor = conn.cursor()
-                # Quoc continue: working on the query
                 cursor.execute('''
                     SELECT cf.Task_Group
                         ,cf.Row_Num
@@ -41,13 +43,14 @@ class Mozilla_File_Function_Scraper:
                         ,cf.Previous_File_Name
                         ,cf.Updated_File_Name
                         ,cf.File_Status
+                        ,cf.Unique_Hash --Changeset File's Unique Hash
                         ,c.Mercurial_Type
                         ,c.Child_Hashes
                     FROM Bugzilla_Mozilla_Changeset_Files cf
                     INNER JOIN Bugzilla_Mozilla_Changesets c ON c.Hash_Id = cf.Changeset_Hash_ID
                     WHERE cf.Task_Group = ?
                     AND cf.Row_Num BETWEEN ? AND ?
-                    AND cf.Process_Status = NULL -- Null status mean the records have not been processed.
+                    AND cf.Process_Status IS NULL -- Null status mean the records have not been processed.
                     ORDER BY cf.Task_Group ASC, cf.Row_Num ASC
                 ''', (task_group, start_row, end_row))
                 
@@ -89,7 +92,7 @@ class Mozilla_File_Function_Scraper:
         content (str): The content of the file as a string.
         
         Returns:
-        tuple: (overall_status, process_statuses, list_of_functions_a, list_of_functions_b)
+        tuple: (overall_status, process_statuses, list_of_functions_a, dict_function_count_a, list_of_functions_b, dict_function_count_b)
         """
 
         attempt_number = 1
@@ -104,7 +107,7 @@ class Mozilla_File_Function_Scraper:
         mercurial_type_index = 0
         process_statuses = []
         file_extension = ''
-        field_name = ['overall_status', 'process_statuses', 'list_of_functions_a', 'list_of_functions_b']
+        field_name = ['overall_status', 'process_statuses', 'list_of_functions_a', 'dict_function_count_a', 'list_of_functions_b', 'dict_function_count_b']
 
         try:
             while attempt_number <= max_retries:
@@ -123,19 +126,19 @@ class Mozilla_File_Function_Scraper:
                 # Format the request url for both a and b:
                 request_url_a = request_url_format.replace("{mercurial_type}", mercurial_type_list[mercurial_type_index]
                         ).replace("{changeset_hash_id}", db_mozilla_changeset_file.child_hash
-                        ).replace("{file_path}", file_path_a) if not file_path_a and not request_url_a else None
+                        ).replace("{file_path}", file_path_a) if file_path_a and not request_url_a else None
                 
                 request_url_b = request_url_format.replace("{mercurial_type}", mercurial_type_list[mercurial_type_index]
                         ).replace("{changeset_hash_id}", db_mozilla_changeset_file.changeset_hash_id
-                        ).replace("{file_path}", file_path_b) if not file_path_b and not request_url_a else None
+                        ).replace("{file_path}", file_path_b) if file_path_b and not request_url_b else None
 
                 try:
                     # Make web requests:
-                    response_a = requests.get(request_url_a) if not request_url_a and not response_a else response_a
-                    response_b = requests.get(request_url_b) if not request_url_a and not response_b else response_b
+                    response_a = requests.get(request_url_a) if request_url_a and not response_a else response_a
+                    response_b = requests.get(request_url_b) if request_url_b and not response_b else response_b
 
-                    response_status_code_a = response_a.status_code if not response_a else -1
-                    response_status_code_b = response_b.status_code if not response_b else -1
+                    response_status_code_a = response_a.status_code if response_a else -1
+                    response_status_code_b = response_b.status_code if response_b else -1
 
                 except requests.exceptions.RequestException as e:
                     # Cases when issue with internet connection or reach web request limit.
@@ -144,7 +147,7 @@ class Mozilla_File_Function_Scraper:
                     print(f"Failed request connection.\n Attempt {str(attempt_number)}/{str(max_retries)}. Retrying in 10 seconds...", end="", flush=True)
                     time.sleep(10)
                     pass
-                
+                 
                 # If both requests successful:
                 if (response_status_code_a == 200 or not file_path_a) and (response_status_code_b == 200 or file_path_b):
                     process_statuses.append("200 OK")
@@ -185,11 +188,11 @@ class Mozilla_File_Function_Scraper:
             # Case reaching the maximum attempt web request, then we assume this records have not been processed yet.
             else:
                 process_statuses = []
-                return namedtuple('WebRequestRecord', field_name)(*("network issue", process_statuses, None, None))
+                return namedtuple('WebRequestRecord', field_name)(*("network issue", process_statuses, None, None, None, None))
             
             # Exit the function in the case request url failed.
             if response_status_code_a == 404 or response_status_code_b == 404:
-                return namedtuple('WebRequestRecord', field_name)(*("404", process_statuses, None, None))
+                return namedtuple('WebRequestRecord', field_name)(*("404", process_statuses, None, None, None, None))
 
 
             #######################################################################################
@@ -200,11 +203,25 @@ class Mozilla_File_Function_Scraper:
             list_of_functions_a = []
             list_of_functions_b = []
 
+            # Quoc: removed these testing codes:
+            response_b_text = '''
+                function function1(...) { statement0 }
+                (function(...)
+                {
+                    statement1
+                })(...);
+
+                (function(...)
+                {
+                    statement2
+                })(...);
+            '''
+
             # Important: list in python have properties: Order Preservation and Allowing Duplicate Values
             match(file_extension):
                 case "js":
                     list_of_functions_a = function_extractor.extract_js_functions(response_a.text) if response_a else list_of_functions_a
-                    list_of_functions_b = function_extractor.extract_js_functions(response_b.text) if response_b else list_of_functions_b
+                    list_of_functions_b = function_extractor.extract_js_functions(response_b_text) if response_b else list_of_functions_b
                 case "c":
                     list_of_functions_a = function_extractor.extract_c_functions(response_a.text) if response_a else list_of_functions_a
                     list_of_functions_b = function_extractor.extract_c_functions(response_b.text) if response_b else list_of_functions_b
@@ -216,37 +233,37 @@ class Mozilla_File_Function_Scraper:
                     list_of_functions_b = function_extractor.extract_py_functions(response_b.text) if response_b else list_of_functions_b
                 case _: # Default case
                     process_statuses.append("Not js,c,cpp,py Files")
-                    return namedtuple('WebRequestRecord', field_name)(*("Incorrect file extension", process_statuses, None, None))
+                    return namedtuple('WebRequestRecord', field_name)(*("Incorrect file extension", process_statuses, None, None, None, None))
 
             # Handle the case if the file has multiple similar function names:
-            function_count_a = {}
-            function_count_b = {}
+            dict_function_count_a = {}
+            dict_function_count_b = {}
             updated_list_of_functions_a = []
             updated_list_of_functions_b = []
 
             for name, implementation in list_of_functions_a:
                 # If the function name has been encountered before, increment the count
-                if name in function_count_a:
-                    function_count_a[name] += 1
+                if name in dict_function_count_a:
+                    dict_function_count_a[name] += 1
                     # Prepend the count to the function name
-                    updated_list_of_functions_a.append((f"{function_count_a[name]}-{name}", implementation))
+                    updated_list_of_functions_a.append((f"{dict_function_count_a[name]}-{name}", implementation))
                 else:
                     # If first occurrence, initialize the count and use the original name
-                    function_count_a[name] = 1
+                    dict_function_count_a[name] = 1
                     updated_list_of_functions_a.append((name, implementation))
             
             for name, implementation in list_of_functions_b:
                 # If the function name has been encountered before, increment the count
-                if name in function_count_b:
-                    function_count_b[name] += 1
+                if name in dict_function_count_b:
+                    dict_function_count_b[name] += 1
                     # Prepend the count to the function name
-                    updated_list_of_functions_b.append((f"{function_count_b[name]}-{name}", implementation))
+                    updated_list_of_functions_b.append((f"{dict_function_count_b[name]}-{name}", implementation))
                 else:
                     # If first occurrence, initialize the count and use the original name
-                    function_count_b[name] = 1
+                    dict_function_count_b[name] = 1
                     updated_list_of_functions_b.append((name, implementation))
 
-            return namedtuple('WebRequestRecord', field_name)(*("successful", process_statuses, list_of_functions_a, list_of_functions_b))
+            return namedtuple('WebRequestRecord', field_name)(*("successful", process_statuses, list_of_functions_a, dict_function_count_a, list_of_functions_b, dict_function_count_b))
 
         except Exception as e:
             # TODO: Quoc - ultimately we want to handle generic exception in the case that it doesn't cease the scraper
@@ -278,7 +295,6 @@ class Mozilla_File_Function_Scraper:
             
             cursor = conn.cursor()
 
-            # TODO: Prepare data for insertion
             # Reminder: dictionary can be used to access value by key: dictionary[key] => value
             dict_of_functions_a = {}
             dict_of_functions_b = {}
@@ -288,74 +304,80 @@ class Mozilla_File_Function_Scraper:
             added_function_list = []
             modified_function_list = []
             unchanged_function_list = []
-            
+
+            # Variables to query database:
+            params = []
+            batches = []
+            db_queries = ''
+            query_count = 0
+            query_size_limit = 100
+
+            def check_batch_limit():
+                nonlocal db_queries, params, query_count # Note: `nonlocal` keyword refers the function to use the variables outside of its function, not the local variables inside itself.
+                if query_count >= query_size_limit:
+                    batches.append((db_queries, list(params))) # Use list() to copy `params` to avoid 'Mutable Variables Issue' when the `params` resets since they share same reference.
+                    params = []    # Reset params for next batch
+                    db_queries = ''  # Reset db_queries for the next batch
+                    query_count = 0  # Reset query count
+
             try:
-                # Remove all spacings, new lines characters:
-                if web_request_function_data.list_of_functions_a:
-                    dict_of_functions_a = {func_sign: re.sub(r'\s+', '', func_impl) for func_sign, func_impl in web_request_function_data.list_of_functions_a}
-                if web_request_function_data.list_of_functions_b:
-                    dict_of_functions_b = {func_sign: re.sub(r'\s+', '', func_impl) for func_sign, func_impl in web_request_function_data.list_of_functions_b}
+                if (web_request_function_data.overall_status == "successful"):
+                    # Remove all spacings, new lines characters:
+                    if web_request_function_data.list_of_functions_a:
+                        dict_of_functions_a = {func_sign: re.sub(r'\s+', '', func_impl) for func_sign, func_impl in web_request_function_data.list_of_functions_a}
+                    if web_request_function_data.list_of_functions_b:
+                        dict_of_functions_b = {func_sign: re.sub(r'\s+', '', func_impl) for func_sign, func_impl in web_request_function_data.list_of_functions_b}
 
-                if "/dev/null" not in db_mozilla_changeset_file.previous_file_name or "/dev/null" not in db_mozilla_changeset_file.updated_file_name:
-                    for name, prev_implementation in dict_of_functions_a.items():
-                        # If we found the name of function a list in the function b list, and the current implementation for both are not matched, then it is modified:
-                        if name in dict_of_functions_b:
-                            current_implementation = dict_of_functions_b[name]
-                            if prev_implementation != current_implementation:
-                                modified_function_list.append(name) # modified
+                    if "/dev/null" not in db_mozilla_changeset_file.previous_file_name and "/dev/null" not in db_mozilla_changeset_file.updated_file_name:
+                        for name, prev_implementation in dict_of_functions_a.items():
+                            # If we found the name of function a list in the function b list, and the current implementation for both are not matched, then it is modified:
+                            if name in dict_of_functions_b:
+                                current_implementation = dict_of_functions_b[name]
+                                if prev_implementation != current_implementation:
+                                    modified_function_list.append(name) # modified
+                                else:
+                                    unchanged_function_list.append(name)    # unchanged
+
+                                del dict_of_functions_b[name]   # Remove each element from dictionary after complete processed.
                             else:
-                                unchanged_function_list.append(name)    # unchanged
+                                deleted_function_list.append(name)  # deleted
 
-                            del dict_of_functions_b[name]   # Remove each element from dictionary after complete processed.
-                        else:
-                            deleted_function_list.append(name)  # deleted
-
-                    # After the loop finished, any remaining elements in 'b' are considered 'added':
-                    added_function_list = list(dict_of_functions_b.keys())
-
-                else:
-                    # If the file is 'deleted' or newly 'added', then all the functions should have the status of "deleted" or "added":
-                    if "/dev/null" in db_mozilla_changeset_file.previous_file_name:
+                        # After the loop finished, any remaining elements in 'b' are considered 'added':
                         added_function_list = list(dict_of_functions_b.keys())
-                    elif "/dev/null" in db_mozilla_changeset_file.updated_file_name:
-                        deleted_function_list = list(dict_of_functions_a.keys())
 
-                ## Prepare the query batches to save to the database:
-                # Variables to query database:
-                params = []
-                batches = []
-                db_queries = ''
-                query_count = 0
-                query_size_limit = 100
-                def check_batch_limit():
-                    nonlocal db_queries, params, query_count # Note: `nonlocal` keyword refers the function to use the variables outside of its function, not the local variables inside itself.
-                    if query_count >= query_size_limit:
-                        batches.append((db_queries, list(params))) # Use list() to copy `params` to avoid 'Mutable Variables Issue' when the `params` resets since they share same reference.
-                        params = []    # Reset params for next batch
-                        db_queries = ''  # Reset db_queries for the next batch
-                        query_count = 0  # Reset query count
+                    else:
+                        # If the file is 'deleted' or newly 'added', then all the functions should have the status of "deleted" or "added":
+                        if "/dev/null" in db_mozilla_changeset_file.previous_file_name:
+                            added_function_list = list(dict_of_functions_b.keys())
+                        elif "/dev/null" in db_mozilla_changeset_file.updated_file_name:
+                            deleted_function_list = list(dict_of_functions_a.keys())
 
-                insert_function_query = '''INSERT INTO [dbo].[Bugzilla_Mozilla_Functions] ([Function_Signature],[Function_Status],[Inserted_On]) VALUES (?, ?, GETUTCDATE());'''
-                for func_sign in added_function_list:
-                    db_queries += insert_function_query
-                    params.extend([func_sign, "added"])
-                    query_count += 1
-                    check_batch_limit()
-                for func_sign in deleted_function_list:
-                    db_queries += insert_function_query
-                    params.extend([func_sign, "deleted"])
-                    query_count += 1
-                    check_batch_limit()
-                for func_sign in modified_function_list:
-                    db_queries += insert_function_query
-                    params.extend([func_sign, "modified"])
-                    query_count += 1
-                    check_batch_limit()
-                for func_sign in unchanged_function_list:
-                    db_queries += insert_function_query
-                    params.extend([func_sign, "unchanged"])
-                    query_count += 1
-                    check_batch_limit()
+                    ## Prepare the query batches to save to the database:
+                    insert_function_query_template = '''IF NOT EXISTS (SELECT 1 FROM [dbo].[Bugzilla_Mozilla_Functions] WHERE [Changeset_File_Unique_Hash] = ? AND [Function_Signature] = ?) INSERT INTO [dbo].[Bugzilla_Mozilla_Functions] ([Changeset_File_Unique_Hash], [Function_Signature], [Function_Status], [Inserted_On]) VALUES (?, ?, ?, GETUTCDATE());'''
+                    for func_sign in added_function_list:
+                        db_queries += insert_function_query_template
+                        func_sign = func_sign.strip()
+                        params.extend([db_mozilla_changeset_file.changeset_file_unique_hash, func_sign, db_mozilla_changeset_file.changeset_file_unique_hash, func_sign, "added"])
+                        query_count += 1
+                        check_batch_limit()
+                    for func_sign in deleted_function_list:
+                        db_queries += insert_function_query_template
+                        func_sign = func_sign.strip()
+                        params.extend([db_mozilla_changeset_file.changeset_file_unique_hash, func_sign, db_mozilla_changeset_file.changeset_file_unique_hash, func_sign, "deleted"])
+                        query_count += 1
+                        check_batch_limit()
+                    for func_sign in modified_function_list:
+                        db_queries += insert_function_query_template
+                        func_sign = func_sign.strip()
+                        params.extend([db_mozilla_changeset_file.changeset_file_unique_hash, func_sign, db_mozilla_changeset_file.changeset_file_unique_hash, func_sign, "modified"])
+                        query_count += 1
+                        check_batch_limit()
+                    for func_sign in unchanged_function_list:
+                        db_queries += insert_function_query_template
+                        func_sign = func_sign.strip()
+                        params.extend([db_mozilla_changeset_file.changeset_file_unique_hash, func_sign, db_mozilla_changeset_file.changeset_file_unique_hash, func_sign, "unchanged"])
+                        query_count += 1
+                        check_batch_limit()
                 
                 # Prepare query to update the process status in `Bugzilla_Mozilla_Changeset_Files`:
                 update_process_statuses = " | ".join(web_request_function_data.process_statuses) if web_request_function_data.process_statuses else None
@@ -376,6 +398,7 @@ class Mozilla_File_Function_Scraper:
                 # Commit the transaction
                 cursor.execute("COMMIT")
                 conn.commit()
+                return
 
             except pyodbc.Error as e:
                 error_code = e.args[0]
@@ -403,39 +426,50 @@ class Mozilla_File_Function_Scraper:
         remaining_records = total_records
 
         for i in range(total_records):
-            print(f"[{strftime('%m/%d/%Y %H:%M:%S', localtime())}] Task Group: {str(task_group)} [{str(start_row)}-{str(end_row)}]. Remainings: {str(remaining_records)}. Process row number {db_mozilla_changeset_file.row_num}...", end="", flush=True)
             # While True gives us ability to re-do the iteration if needed.
             re_run_iteration_count = 1
             while re_run_iteration_count <= 5:
                 db_mozilla_changeset_file = namedtuple('Record',
                         ['task_group', 'row_num', 'process_status', 'changeset_hash_id',
                          'previous_file_name', 'updated_file_name', 'file_status',
-                         'mercurial_type', 'child_hash'])(*records_to_be_processed[i])
+                         'changeset_file_unique_hash', 'mercurial_type', 'child_hash'])(*records_to_be_processed[i])
+                
+                print(f"[{strftime('%m/%d/%Y %H:%M:%S', localtime())}] Task Group: {str(task_group)} [{str(start_row)}-{str(end_row)}]. Remainings: {str(remaining_records)}. Process row number {db_mozilla_changeset_file.row_num}...", end="", flush=True)
 
                 web_request_function_data = self.scrap_mozilla_function_data(db_mozilla_changeset_file)
 
-                if web_request_function_data.overall_status == "successful":
+                if web_request_function_data.overall_status in {"successful", "404" }:
                     self.save_bugzilla_mozilla_functions(db_mozilla_changeset_file, web_request_function_data)
+                    print(f"{web_request_function_data.overall_status}")
+                    break
 
+                # Cases: "Network issue" - If so, we treated it as has not been processed, so we re-do it.
+                else:
+                    if re_run_iteration_count <= 5:
+                        print(f"{web_request_function_data.overall_status}. Go Sleep for 10s. Attempt: {re_run_iteration_count}/5.")
+                        sys.sleep(10)
+                        re_run_iteration_count += 1
+                    else:
+                        print(f"Max attempt reach. Attempt: {re_run_iteration_count}/5. Skipped.")
+                        
 
 
 #########################################################################
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="")
-    parser.add_argument('arg_1', type=int, help='Argument 1')
-    parser.add_argument('arg_2', type=int, help='Argument 2')
-    parser.add_argument('arg_3', type=int, help='Argument 3')
-    parser_args = parser.parse_args()
-    task_group = parser_args.arg_1
-    start_row = parser_args.arg_2
-    end_row = parser_args.arg_3
+    # parser = argparse.ArgumentParser(description="")
+    # parser.add_argument('arg_1', type=int, help='Argument 1')
+    # parser.add_argument('arg_2', type=int, help='Argument 2')
+    # parser.add_argument('arg_3', type=int, help='Argument 3')
+    # parser_args = parser.parse_args()
+    # task_group = parser_args.arg_1
+    # start_row = parser_args.arg_2
+    # end_row = parser_args.arg_3
 
     # Testing specific input arguments:
-    # task_group = 2   # Task group
-    # start_row = 77112   # Start row
-    # end_row = 77113   # End row
-
+    task_group = 1   # Task group
+    start_row = 3   # Start row
+    end_row = 3   # End row
     scraper = Mozilla_File_Function_Scraper()
     scraper.run_scraper(task_group, start_row, end_row)
 
