@@ -204,6 +204,13 @@ class Mozilla_File_Function_Scraper:
             list_of_functions_b = []
 
             # Quoc: removed these testing codes:
+            response_a_text = '''
+                function function1(...) { statement0 }
+                (function(...)
+                {
+                    statement2
+                })(...);
+            '''
             response_b_text = '''
                 function function1(...) { statement0 }
                 (function(...)
@@ -220,7 +227,7 @@ class Mozilla_File_Function_Scraper:
             # Important: list in python have properties: Order Preservation and Allowing Duplicate Values
             match(file_extension):
                 case "js":
-                    list_of_functions_a = function_extractor.extract_js_functions(response_a.text) if response_a else list_of_functions_a
+                    list_of_functions_a = function_extractor.extract_js_functions(response_a_text) # if response_a else list_of_functions_a
                     list_of_functions_b = function_extractor.extract_js_functions(response_b_text) if response_b else list_of_functions_b
                 case "c":
                     list_of_functions_a = function_extractor.extract_c_functions(response_a.text) if response_a else list_of_functions_a
@@ -263,7 +270,7 @@ class Mozilla_File_Function_Scraper:
                     dict_function_count_b[name] = 1
                     updated_list_of_functions_b.append((name, implementation))
 
-            return namedtuple('WebRequestRecord', field_name)(*("successful", process_statuses, list_of_functions_a, dict_function_count_a, list_of_functions_b, dict_function_count_b))
+            return namedtuple('WebRequestRecord', field_name)(*("successful", process_statuses, updated_list_of_functions_a, dict_function_count_a, updated_list_of_functions_b, dict_function_count_b))
 
         except Exception as e:
             # TODO: Quoc - ultimately we want to handle generic exception in the case that it doesn't cease the scraper
@@ -299,18 +306,18 @@ class Mozilla_File_Function_Scraper:
             dict_of_functions_a = {}
             dict_of_functions_b = {}
 
-            # Containers used for saving to database:
-            deleted_function_list = []
-            added_function_list = []
-            modified_function_list = []
-            unchanged_function_list = []
-
             # Variables to query database:
             params = []
             batches = []
             db_queries = ''
             query_count = 0
             query_size_limit = 100
+
+            # Containers used for saving to database:
+            deleted_function_list = []
+            added_function_list = []
+            modified_function_list = []
+            unchanged_function_list = []
 
             def check_batch_limit():
                 nonlocal db_queries, params, query_count # Note: `nonlocal` keyword refers the function to use the variables outside of its function, not the local variables inside itself.
@@ -320,6 +327,10 @@ class Mozilla_File_Function_Scraper:
                     db_queries = ''  # Reset db_queries for the next batch
                     query_count = 0  # Reset query count
 
+            # Helper function to remove the prefix numbering from function names.
+            def get_original_func_name(func_name):
+                # Return function name without the prefix, e.g., "2-functionA(params)" -> "functionA(params)"
+                return func_name.split("-", 1)[-1] if "-" in func_name else func_name
             try:
                 if (web_request_function_data.overall_status == "successful"):
                     # Remove all spacings, new lines characters:
@@ -328,22 +339,100 @@ class Mozilla_File_Function_Scraper:
                     if web_request_function_data.list_of_functions_b:
                         dict_of_functions_b = {func_sign: re.sub(r'\s+', '', func_impl) for func_sign, func_impl in web_request_function_data.list_of_functions_b}
 
-                    if "/dev/null" not in db_mozilla_changeset_file.previous_file_name and "/dev/null" not in db_mozilla_changeset_file.updated_file_name:
-                        for name, prev_implementation in dict_of_functions_a.items():
-                            # If we found the name of function a list in the function b list, and the current implementation for both are not matched, then it is modified:
-                            if name in dict_of_functions_b:
-                                current_implementation = dict_of_functions_b[name]
-                                if prev_implementation != current_implementation:
-                                    modified_function_list.append(name) # modified
+                    #if "/dev/null" not in db_mozilla_changeset_file.previous_file_name and "/dev/null" not in db_mozilla_changeset_file.updated_file_name:
+                    if True:
+                        # Create a copy of dict_function_count_a to track deleted functions.
+                        # remaining_count_a = web_request_function_data.dict_function_count_a.copy()
+                        copy_function_count_a = web_request_function_data.dict_function_count_a.copy()
+                        copy_function_count_b = web_request_function_data.dict_function_count_b.copy()
+
+                        # Loop through functions in dict_of_functions_b and determine status (modified, unchanged, added).
+                        for name_b, implementation_b in dict_of_functions_b.items():
+                            original_func_name_b = get_original_func_name(name_b)
+                            count_b = copy_function_count_b[original_func_name_b]
+
+                            if original_func_name_b in copy_function_count_a:
+                                # Check if we still have remaining instances in dict_of_functions_a for this function signature.
+                                count_a = copy_function_count_a[original_func_name_b]
+
+                                # If count_b == 1 and count_a == 1
+                                if count_b == 1 and count_a == 1:
+                                    if original_func_name_b not in web_request_function_data.dict_of_functions_a:
+                                        deleted_function_list.append(original_func_name_b)
+                                    elif web_request_function_data.dict_of_functions_a[original_func_name_b] != implementation_b:
+                                        modified_function_list.append(original_func_name_b)
+                                    elif web_request_function_data.dict_of_functions_a[original_func_name_b] == implementation_b:
+                                        unchanged_function_list(original_func_name_b)
+
+                                # If count_b >= 2 and count_a == 1
+                                elif count_b >= 2 and (count_a == 1 or count_a == 0):
+                                    if count_a == 1:
+                                        if implementation_b == web_request_function_data.dict_of_functions_a[original_func_name_b]:
+                                            unchanged_function_list.append(implementation_b)
+                                            copy_function_count_a[original_func_name_a] -= 1
+                                        else:
+                                            # Status for this could be 'modified' or 'added':
+                                            modified_function_list.append(implementation_b)
+                                    elif count_a == 0:
+                                        added_function_list.append(implementation_b)
+
+                                # If count_b >= 2 and count_a >= 2
+                                elif count_b >= 2 and count_a >= 2:
+                                    for name_a, implementation_a in dict_of_functions_a.items():
+                                        original_func_name_a = get_original_func_name(name_a)
+                                        
+                                        if implementation_a == implementation_b:
+                                            unchanged_function_list.append(original_func_name_a)
+                                            break
+                                        else:
+                                            continue
+
+
+                                if count_a > 0:
+                                    # Compare this function implementation from dict_b with all corresponding function implementations in dict_a.
+                                    matched = False
+                                    if count_b == 1:
+                                    if count_b >= 2:
+                                    # Loop through functions in dict_of_functions_a:
+                                    for name_a, implementation_a in dict_of_functions_a.items():
+                                        original_func_name_a = get_original_func_name(name_a)
+
+                                        if original_func_name_a == original_func_name_b and implementation_a == implementation_b:
+                                            # It's an unchanged function (matching implementation found).
+                                            unchanged_function_list.append(original_func_name_a)
+                                            # remaining_count_a[original_func_name_a] -= 1  # Decrement the count of this function in dict a.
+                                            matched = True
+                                            break
+                                        
+                                        if count_a == 1:
+                                            break
+                                            
+                                    if not matched:
+                                        # If no matching implementation is found, consider it as a modified function.
+                                        modified_function_list.append(original_func_name_b)
+                                        # remaining_count_a[original_func_name_b] -= 1  # Decrement the count of this function in dict a.
+
+                                # Case: count_b >= 1 and count_a == 0
                                 else:
-                                    unchanged_function_list.append(name)    # unchanged
-
-                                del dict_of_functions_b[name]   # Remove each element from dictionary after complete processed.
+                                    # This is an "added" function because no more matching instances exist in dict_a.
+                                    added_function_list.append(original_func_name_b)
                             else:
-                                deleted_function_list.append(name)  # deleted
+                                # If original_func_name_b doesn't exist in dict_a, consider it an added function.
+                                added_function_list.append(original_func_name_b)
 
-                        # After the loop finished, any remaining elements in 'b' are considered 'added':
-                        added_function_list = list(dict_of_functions_b.keys())
+                        # After comparing with all items in dict_of_functions_b, any remaining counts in dict_a are deleted functions.
+                        for name_a, count_a in remaining_count_a.items():
+                            if count_a > 0:
+                                deleted_function_list.extend([name_a] * count_a)  # Add remaining count of deleted functions.
+
+
+
+
+
+
+
+
+
 
                     else:
                         # If the file is 'deleted' or newly 'added', then all the functions should have the status of "deleted" or "added":

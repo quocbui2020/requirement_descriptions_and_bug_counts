@@ -4534,7 +4534,7 @@ class className {
 ##############################################################################
 ##############################################################################
 
-if __name__ == '__main__':
+# if __name__ == '__main__':
     # Run all test functions:
     # unittest.main(argv=['first-arg-is-ignored'], exit=False)
 
