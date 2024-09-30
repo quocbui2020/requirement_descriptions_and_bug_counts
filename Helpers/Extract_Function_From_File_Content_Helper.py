@@ -32,7 +32,7 @@ class ExtractFunctionFromFileContentHelper:
         
         return self.remove_comments(file_type='py', content=content)
     
-    def extract_python_functions(self, content):
+    def extract_py_functions(self, content):
         """
         Extract all Python functions.
         
@@ -234,6 +234,7 @@ class ExtractFunctionFromFileContentHelper:
     ##########################################
     def remove_js_comments(self, content):
         """
+
         Remove all JavaScript comments from the given content.
         
         Parameters:
@@ -291,19 +292,19 @@ class ExtractFunctionFromFileContentHelper:
                     tracker['begin_new_line_index'] = i
 
                 ## Handle cases:
-                # let/const function_name = function(...) {...}
-                # let/const function_name = async function(...) => {...}
-                # let/const function_name = async (...) => {...}
-                # let/const function_name = (...) => {...}
-                elif content[i] in {'c', 'l'} and i-1 != -1 and (content[i-1] in {' ', '\n'}) and i+6 < tracker['last_char_index']:
-                    if content[i:i+6] == 'const ' or content[i:i+4] == 'let ':
+                # var/let/const function_name = function(...) {...}
+                # var/let/const function_name = async function(...) => {...}
+                # var/let/const function_name = async (...) => {...}
+                # var/let/const function_name = (...) => {...}
+                elif content[i] in {'c', 'l', 'v'} and i-1 != -1 and (content[i-1].isspace()) and i+6 < tracker['last_char_index']:
+                    if content[i:i+6] == 'const ' or content[i:i+4] in {'let ', 'var '}:
                         # Detect let or const
                         tracker['potential_begin_function_index'] = i
 
-                        # Skip past 'const' or 'let'
-                        i = i+6 if content[i:i+6] == 'const ' else i+4 
+                        # Skip past 'const', 'let', or 'var':
+                        i = i+6 if content[i:i+6] == 'const ' else i+4
 
-                        # Skip spaces after 'const' or 'let'
+                        # Skip spaces after 'const', 'let', or 'var':
                         while i <= tracker['last_char_index'] and content[i] == ' ':
                             i += 1
 
@@ -342,12 +343,13 @@ class ExtractFunctionFromFileContentHelper:
                                 i += 1
 
                             # Track parentheses to extract the full signature
+                            saved_missing_closed_parentheses_inside_func_params = tracker['missing_closed_parentheses']
                             if content[i] == '(':
                                 tracker['missing_closed_parentheses'] += 1
 
                             # Find the full function signature (including parameters)
                             param_start = i
-                            while i <= tracker['last_char_index'] and tracker['missing_closed_parentheses'] > 0:
+                            while i <= tracker['last_char_index'] and tracker['missing_closed_parentheses'] > saved_missing_closed_parentheses_inside_func_params:
                                 i += 1
                                 # Assuming something, the parameters have string in it, so better have `is_inside_string()` here:
                                 if not is_inside_string():
@@ -362,7 +364,7 @@ class ExtractFunctionFromFileContentHelper:
                             # Check for '=>' to confirm the case `let/const func_name = (...) => {...}`, not the tuple
                             while could_be_tuple and i <= tracker['last_char_index']:
                                 i += 1
-                                if (content[i] not in {' ', '\n'} and content [i:i+2] != '=>') or content[i] == '{':
+                                if (not content[i].isspace() and content [i:i+2] != '=>') or content[i] == '{':
                                     # We confirm that this is just a tuple, not a function. No need to continue
                                     i -= 1 # Move back one character
                                     break
@@ -377,15 +379,15 @@ class ExtractFunctionFromFileContentHelper:
                                     i += 1
 
                                 # Track curly braces to extract the full implementation
+                                saved_missing_closed_curly_brackets_func_body = tracker['missing_closed_curly_brackets']
                                 function_start = tracker['potential_begin_function_index']  # Start of function
                                 while i <= tracker['last_char_index']:
-                                    char = content[i]
                                     if not is_inside_string():
-                                        if char == '{':
+                                        if content[i] == '{':
                                             tracker['missing_closed_curly_brackets'] += 1
-                                        elif char == '}':
+                                        elif content[i] == '}':
                                             tracker['missing_closed_curly_brackets'] -= 1
-                                            if tracker['missing_closed_curly_brackets'] == 0:
+                                            if tracker['missing_closed_curly_brackets'] == saved_missing_closed_curly_brackets_func_body:
                                                 function_end = i + 1
                                                 function_implementation = content[function_start:function_end]
                                                 list_of_js_functions.append((function_signature, function_implementation))
@@ -394,7 +396,6 @@ class ExtractFunctionFromFileContentHelper:
                                                 tracker['potential_begin_function_index'] = -1
                                                 break
                                     i += 1
-
                                 else:
                                     # Reset the flag:
                                     tracker['potential_begin_function_index'] = -1
@@ -409,7 +410,7 @@ class ExtractFunctionFromFileContentHelper:
                 # function function_name(...) {...}
                 # function* function_name(...) {...}
                 # asyn function function_name(...) {...}
-                elif content[i] == 'f' and i-1 != -1 and (content[i-1] in {' ', '\n'}) and i+9 < tracker['last_char_index'] and (content[i:i+9] == 'function ' or content[i:i+9] == 'function*'):
+                elif content[i] == 'f' and i-1 != -1 and content[i-1].isspace() and i+9 < tracker['last_char_index'] and (content[i:i+9] == 'function ' or content[i:i+9] == 'function*'):
                     tracker['potential_begin_function_index'] = i
 
                     # Check to see if we have 'async' keyword before 'function', then we update the flag 'potential_begin_function_index' to include 'async':
@@ -448,11 +449,12 @@ class ExtractFunctionFromFileContentHelper:
                     param_start = i
 
                     # Track the parentheses to extract the full signature
+                    saved_missing_closed_parentheses_inside_func_params = tracker['missing_closed_parentheses']
                     if content[i] == '(':
                         tracker['missing_closed_parentheses'] += 1
 
                     # Find the full function signature (including parameters)
-                    while i <= tracker['last_char_index'] and tracker['missing_closed_parentheses'] > 0:
+                    while i <= tracker['last_char_index'] and tracker['missing_closed_parentheses'] > saved_missing_closed_parentheses_inside_func_params:
                         i += 1
                         if content[i] == '(':
                             tracker['missing_closed_parentheses'] += 1
@@ -467,15 +469,17 @@ class ExtractFunctionFromFileContentHelper:
                     while i <= tracker['last_char_index'] and content[i] != '{':
                         i += 1
 
+                    ## About to step through the function body:
+                    saved_missing_closed_curly_brackets_func_body = tracker['missing_closed_curly_brackets']
                     function_start = tracker['potential_begin_function_index']  # Start of function (from 'function')
+                    # Check inside string before enters func body, after that, I don't care what inside the func body:
                     while i <= tracker['last_char_index']:
-                        char = content[i]
                         if not is_inside_string():
-                            if char == '{':
+                            if content[i] == '{':
                                 tracker['missing_closed_curly_brackets'] += 1
-                            elif char == '}':
+                            elif content[i] == '}':
                                 tracker['missing_closed_curly_brackets'] -= 1
-                                if tracker['missing_closed_curly_brackets'] == 0:
+                                if tracker['missing_closed_curly_brackets'] == saved_missing_closed_curly_brackets_func_body:
                                     # We reached the end of the function
                                     function_end = i + 1
                                     function_implementation = content[function_start:function_end]
@@ -485,6 +489,138 @@ class ExtractFunctionFromFileContentHelper:
                                     tracker['potential_begin_function_index'] = -1
                                     break
                         i += 1
+                    else:
+                        # Reset the flag:
+                        tracker['potential_begin_function_index'] = -1
+                            
+                
+                ## Handle cases: Anonymous functions:
+                # random_string(function (...) {...})
+                # random_string(function* (...) {...})
+                # random_string(async function (...)) {...})
+                # random_string((...) => {...})
+                # random_string(async (...) => {...})
+                # (function(...) {...})(...);
+                # (async function(...) {...})(...);
+                # (function* (...) {...})(...);
+                # ((...) => {...})(...);
+                elif i+9 < tracker['last_char_index'] and i-1 != -1 and content[i] == '(':
+                    interested_open_parenthesis_index = i
+                    is_confirmed_function = False
+                    saved_missing_closed_parentheses_inside_func_call = tracker['missing_closed_parentheses'] # This will be use to indicate we exit the parentheses. In case, it is string(string(function(...))) 
+                    tracker['missing_closed_parentheses'] += 1
+
+                    # Capture the first word before '(':
+                    # Note that if the 'word_end_index' == 'word_end_index', it means no word before '(' such as the case if it is '\n'
+                    i -= 1
+                    word_end_index = -1
+                    word_start_index = -1
+                    while i > -1 and content[i].isspace() and content[i] != '\n':
+                        i -= 1 
+                    else:
+                        word_end_index = i
+                    while i > -1 and (content[i].isalnum() or content[i] == '_'):
+                        i -= 1
+                    else:
+                        word_start_index = i+1
+                    
+                    if word_start_index > word_end_index:
+                        word_start_index = interested_open_parenthesis_index
+                        word_end_index = interested_open_parenthesis_index
+
+                    i = interested_open_parenthesis_index + 1
+
+                    # Skip spaces forward after '(':
+                    while i <= tracker['last_char_index'] and content[i] == ' ':
+                        i += 1
+
+                    # Detect 'function' or 'async' keywords or '(...)' pattern:
+                    if i+8 < tracker['last_char_index'] and ((content[i:i+8] == 'function' and not content[i+8].isalpha()) or (content[i:i+5] == 'async' and not content[i+5].isalpha()) or content[i] == '('):
+                        missing_arrow_indicator = False # This flag indicates we are looking for "=>" to confirm it is a function
+
+                        # keyword 'fucntion' and 'async' garantee they are function:
+                        if content[i:i+8] == 'function':
+                            i += 8  # Skip 'function'
+                            is_confirmed_function = True
+                        elif content[i:i+5] == 'async':
+                            i += 5  # Skip 'async'
+                            is_confirmed_function = True
+                        # We need to look for "=>" to confirm it's a function:
+                        elif content[i] == '(':
+                            missing_arrow_indicator = True
+
+                        # Skip to the opening parenthesis '('. There could be spacing in between:
+                        while i <= tracker['last_char_index'] and content[i] != '(':
+                            i += 1
+
+                        # Track parentheses to extract the full signature
+                        saved_missing_closed_parentheses_inside_func_params = tracker['missing_closed_parentheses']
+                        if content[i] == '(':
+                            tracker['missing_closed_parentheses'] += 1
+
+                        # Stepping inside the paratheses of function parameters:
+                        param_start = i
+                        while i <= tracker['last_char_index'] and tracker['missing_closed_parentheses'] > saved_missing_closed_parentheses_inside_func_params:
+                            i += 1
+                            # Assuming something, the parameters have string in it, so better have `is_inside_string()` here:
+                            if not is_inside_string():
+                                if content[i] == '(' and not is_inside_string():
+                                    tracker['missing_closed_parentheses'] += 1
+                                elif content[i] == ')' and not is_inside_string():
+                                    tracker['missing_closed_parentheses'] -= 1
+
+                        func_signature_end = i + 1
+                        # For the function_signature, we want to include the first word before '(' since anonymous function doesn't have the name
+                        function_signature = content[word_start_index:func_signature_end]
+
+                        # Check for '=>' to confirm it is a function if `missing_arrow_indicator` sets true:
+                        while missing_arrow_indicator and i <= tracker['last_char_index']:
+                            i += 1
+                            if (not content[i].isspace() and content [i:i+2] != '=>') or content[i] == '{':
+                                # We confirm that this is just a tuple, not a function. No need to continue
+                                i -= 1 # Move back one character
+                                break
+                            elif content[i:i+2] == '=>':
+                                # We confirm that this is a function, not tuple.
+                                is_confirmed_function = True
+                                break
+
+                        if is_confirmed_function:
+                            # Skip to the opening curly brace '{'.
+                            while i <= tracker['last_char_index'] and content[i] != '{':
+                                i += 1
+
+                            # Stepping through the function body:
+                            saved_missing_closed_curly_brackets_func_body = tracker['missing_closed_curly_brackets']
+                            while i <= tracker['last_char_index']:
+                                if not is_inside_string():
+                                    if content[i] == '{':
+                                        tracker['missing_closed_curly_brackets'] += 1
+                                    elif content[i] == '}':
+                                        tracker['missing_closed_curly_brackets'] -= 1
+                                    elif content[i] == '(':
+                                        tracker['missing_closed_parentheses'] += 1
+                                    elif content[i] == ')':
+                                        tracker['missing_closed_parentheses'] -= 1
+
+                                        if tracker['missing_closed_parentheses'] == saved_missing_closed_parentheses_inside_func_call:
+                                            # if this condition below is true, we have a problem:
+                                            if tracker['missing_closed_curly_brackets'] > saved_missing_closed_curly_brackets_func_body:
+                                                break
+
+                                            function_end = i + 1
+                                            function_implementation = content[word_start_index:function_end]
+                                            list_of_js_functions.append((function_signature, function_implementation))
+
+                                            # Reset flags
+                                            tracker['potential_begin_function_index'] = -1
+                                            break
+                                i += 1
+                            else:
+                                # Reset the flag:
+                                tracker['potential_begin_function_index'] = -1
+                    else:
+                        i -= 1 # Prevent it from skipping a character.
                 else:
                     pass
 

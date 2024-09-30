@@ -3646,85 +3646,172 @@ int main() {
     ### Test function for 'extract_js_functions' ###
     def test_extract_js_functions(self):
         javascript_content_1 = '''
-// Function Declaration
-function declaredFunction(param1, param2) {
-    return param1 + param2;
-}
-
-// Function Expression
-const expressionFunction = function(param1, param2) {
-    return param1 * param2;
-};
-
-// Arrow Function
-const arrowFunction = (param1, param2) => {
-    return param1 - param2;
-};
-
-// Arrow Function (concise body)
-const conciseArrowFunction = (param1, param2) => param1 / param2;
-
-// Immediately Invoked Function Expression (IIFE)
-(function() {
-    console.log("IIFE executed");
-})();
-
-// IIFE with a named function expression
-(function namedIIFE() {
-    console.log("Named IIFE executed");
-})();
-
-// Generator Function
-function* generatorFunction() {
-    yield 1;
-    yield 2;
-}
-
-// Method in an Object
-const obj = {
-    methodFunction(param1) {
-        return param1 ** 2;
-    },
-    anotherMethod: function(param1) {
-        return param1 ** 3;
-    },
-    arrowMethod: (param1) => param1 ** 4
-};
-
-// Class with methods
-class MyClass {
-    classMethod(param1) {
-        return param1.toUpperCase();
-    }
-    static staticMethod(param1) {
-        return param1.toLowerCase();
-    }
-}
-
-// Async Function
-async function asyncFunction(param1) {
-    return new Promise((resolve) => {
-        resolve(param1 * 2);
-    });
-}
-
-// Async Arrow Function
-const asyncArrowFunction = async (param1) => {
-    return await new Promise((resolve) => {
-        resolve(param1 / 2);
-    });
-};
-
+// Comment 1
 /*
-/*
-// This function below is inside a comment, should not be detected:
-const functionInComment = async (p2) => {
-    return await new Promise((resolve) => {
-        resolve(p2 / 2);
-    });
-};
-
+function commentFunction()
+{
+	Statement;
+}
 */
+
+let tuple = (1,2,'3');
+
+function func_name0() {
+    statement;
+    "function name(){a}'` "
+    `}}}{{}}`
+}
+
+let function1 = function(...) {
+	statement;
+}
+
+const function2 = async function(...)
+{
+	statement;
+}
+
+let function3 = async (...) { statement }
+
+const function4 = (...) => {
+	statement
+}
+
+let function5 = function*(...)
+{ statement }
+
+const function6 = async function* (...)
+{ statement }
+
+let variable = "hello";
+
+function function7(...)
+{ statement }
+
+async function* function8(...) {
+	statement
+}
+
+function* function9(...) { statement }
+
+random_string1(function (...) {
+	statement
+})
+
+random_string2(function* (...)
+	{
+		statement
+	}
+)
+
+random_string3(async function(...) { statement }, another_parameter)
+
+random_string4(async function*(...) { statement })
+
+random_string5((...) => { statement })
+
+random_string6(async (...) => {
+	statement
+})
+
+(function(...)
+{
+	statement1
+})(...);
+
+(function*(...)
+{
+	statement2
+})(...);
+
+(async function*(...)
+{
+	statement3
+})(...);
+
+(function*(...)
+{
+	statement4
+})(...);
+
+((...) =>
+{
+	statement5
+})(...);
+
+(async (...)
+{
+	statement6
+})(...);
+
+class className {
+	constructor() {
+		constructor statement;
+	}
+	
+	let tuple = (1,2,'3');
+
+	let function1 = function(...) {
+		statement;
+	}
+
+	const function2 = async function(...)
+	{
+		statement;
+	}
+
+	let function3 = async (...) { statement }
+	
+	async function* function8(...) {
+		statement
+	}
+
+	function* function9(...) { statement }
+
+	random_string1(function (...) {
+		statement
+	})
+
+	random_string2(function* (...)
+		{
+			statement
+		}
+	)
+
+	random_string3(async function(...) { statement }, another_parameter)
+
+	random_string4(async function*(...) { statement })
+	
+	(function(...)
+	{
+		statement1
+	})(...);
+
+	(function*(...)
+	{
+		statement2
+	})(...);
+
+	(async function*(...)
+	{
+		statement3
+	})(...);
+
+	(function*(...)
+	{
+		statement4
+	})(...);
+
+	((...) =>
+	{
+		statement5
+	})(...);
+
+	(async (...)
+	{
+		statement6
+	})(...);
+}
 '''
 
         javascript_content_2 = '''
@@ -4417,71 +4504,25 @@ function run_test() {
 
         javascript_content_3 = '''
 ;
-function makeAttachment(opts = {}) {
-  let attachment = Cc[
-    "@mozilla.org/messengercompose/attachment;1"
-  ].createInstance(Ci.nsIMsgAttachment);
-  for (let key in opts) {
-    attachment[key] = opts[key];
-  }
-  return attachment;
+class className {
+	constructor() {
+		constructor statement;
+	}
+	
+	let tuple = (1,2,'3');
+
+	let function1 = function(...) {
+		statement;
+	}
 }
 '''
-        
-        javascript_content_4 = '''
-let tuple = (1,2,'3')
 
-# Immediately Invoked Function Expression (IIFE):
-(function(parameters) {
-    Function body
-})();
-
-const func_name1 = (params) => {
-   Function body
-}
-    
-let func_name2 = async (parameters) => {
-    Function body
-};
-
-const func_name3 = function(parameters) {
-    Function body
-};
-
-let var = '{{}}'
-
-let func_name4 = function(parameters) {
-    Function body
-};
-
-// Comment 1
-/* 
-Comment 2 
-Comment 3
-*/
-
-function func_name5() {
-    statement;
-    "function name(){a}'` "
-    `}}}{{}}`
-}
-
-async function    func_name6 /* Comment 4 */ (parameters) {
-    statement;
-    statement;
-}
-
-function *func_name7(parameters) {
-    Function body
-}
-
-'''
 
         # Test remove_js_comments function:
         # content_without_comments = helper.remove_js_comments(javascript_content_1)
         # print(content_without_comments)
 
-        result = helper.extract_js_functions(javascript_content_4)
+        result = helper.extract_js_functions(javascript_content_1)
         self.print_result(result)
 
 
@@ -4493,7 +4534,7 @@ function *func_name7(parameters) {
 ##############################################################################
 ##############################################################################
 
-if __name__ == '__main__':
+# if __name__ == '__main__':
     # Run all test functions:
     # unittest.main(argv=['first-arg-is-ignored'], exit=False)
 

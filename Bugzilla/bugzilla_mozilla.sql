@@ -17,13 +17,6 @@ Potential improvement of the crawlers:
 3. Add ticket open datetime.
 */
 
-/*
-Current max bug id at 6/9/2024: 1,901,449
-Crawler 1: from 0 to 475,362 (Offset: 0 - 464886)
-Crawler 2: from 475,363 to 950,725 (Offset: 464887 - 887441)
-Crawler 3: from 950,726 to 1,426,088 (Offset: 887442 - 1316182)
-Crawler 4: from 1,426,089 to The End (Offset: 1316183 - End)
-*/
 --Good example of a specific bugzilla:
 select * from Bugzilla where id='1507218';
 
@@ -430,6 +423,50 @@ order by total desc;
 select * from Temp_Comment_Changesets_For_Process
 where Q2_Hash_Id is not null
 order by Q1_Hash_ID;
+
+
+
+--------------------------------------------------
+--------------------------------------------------
+/* Divide the [Bugzilla_Mozilla_Changeset_Files] into the task group and row numbers for processing later. */
+--------------------------------------------------
+--------------------------------------------------
+SELECT cf.Changeset_Hash_ID
+	,cf.Previous_File_Name
+	,cf.Updated_File_Name
+	,cf.File_Status
+	,c.Mercurial_Type
+	,c.Child_Hashes
+FROM Bugzilla_Mozilla_Changeset_Files cf
+INNER JOIN Bugzilla_Mozilla_Changesets c ON c.Hash_Id = cf.Changeset_Hash_ID
+WHERE
+(
+	(
+		cf.Previous_File_Name LIKE '%.js'
+		OR cf.Previous_File_Name LIKE '%.py'
+		OR cf.Previous_File_Name LIKE '%.c'
+		OR cf.Previous_File_Name LIKE '%.cpp'
+	)
+	OR 
+	(
+		cf.Updated_File_Name LIKE '%.js'
+		OR cf.Updated_File_Name LIKE '%.py'
+		OR cf.Updated_File_Name LIKE '%.c'
+		OR cf.Updated_File_Name LIKE '%.cpp'
+	)
+)
+AND c.Child_Hashes not like '%|%' -- Ensure the changesets have only one child hash
+AND
+(
+	Is_Backed_Out_Changeset=1
+	or Backed_Out_By is not null
+	or Backout_Hashes is not null
+)
+
+
+
+
+
 ----------------------------------------------------------------------------------------------
 ----------------------------------------------------------------------------------------------
 /* WORKING AREA */
