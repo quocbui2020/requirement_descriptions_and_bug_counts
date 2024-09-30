@@ -253,7 +253,7 @@ class ExtractFunctionFromFileContentHelper:
         
         # The function to determine if we are inside a string or not:
         def is_inside_string():
-            if content[i] in {'`', '"', "'"}:
+            if i <= tracker['last_char_index'] and content[i] in {'`', '"', "'"}:
                 # Case we're not already inside a string, enter one:
                 if tracker['inside_string'] == False:
                     tracker['inside_string'] = True
