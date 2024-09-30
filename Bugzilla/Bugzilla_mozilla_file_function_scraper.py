@@ -45,7 +45,7 @@ class Mozilla_File_Function_Scraper:
                         ,cf.File_Status
                         ,cf.Unique_Hash --Changeset File's Unique Hash
                         ,c.Mercurial_Type
-                        ,c.Child_Hashes
+                        ,c.Parent_Hashes
                     FROM Bugzilla_Mozilla_Changeset_Files cf
                     INNER JOIN Bugzilla_Mozilla_Changesets c ON c.Hash_Id = cf.Changeset_Hash_ID
                     WHERE cf.Task_Group = ?
@@ -125,7 +125,7 @@ class Mozilla_File_Function_Scraper:
 
                 # Format the request url for both a and b:
                 request_url_a = request_url_format.replace("{mercurial_type}", mercurial_type_list[mercurial_type_index]
-                        ).replace("{changeset_hash_id}", db_mozilla_changeset_file.child_hash
+                        ).replace("{changeset_hash_id}", db_mozilla_changeset_file.parent_hash
                         ).replace("{file_path}", file_path_a) if file_path_a and not request_url_a else None
                 
                 request_url_b = request_url_format.replace("{mercurial_type}", mercurial_type_list[mercurial_type_index]
@@ -137,8 +137,8 @@ class Mozilla_File_Function_Scraper:
                     response_a = requests.get(request_url_a) if request_url_a and not response_a else response_a
                     response_b = requests.get(request_url_b) if request_url_b and not response_b else response_b
 
-                    response_status_code_a = response_a.status_code if response_a else -1
-                    response_status_code_b = response_b.status_code if response_b else -1
+                    response_status_code_a = response_a.status_code if response_a != None else -1 # Note, the phrase `response_a is truthy` also means if it doesn't have response code of 200
+                    response_status_code_b = response_b.status_code if response_b != None else -1
 
                 except requests.exceptions.RequestException as e:
                     # Cases when issue with internet connection or reach web request limit.
@@ -149,14 +149,14 @@ class Mozilla_File_Function_Scraper:
                     pass
                  
                 # If both requests successful:
-                if (response_status_code_a == 200 or not file_path_a) and (response_status_code_b == 200 or file_path_b):
+                if (response_status_code_a == 200 or not file_path_a) and (response_status_code_b == 200 or not file_path_b):
                     process_statuses.append("200 OK")
                     break
 
                 # Case: Incorrect url for some reason, if so, try different mercurial type
                 elif response_status_code_a == 404 or response_status_code_b == 404:
                     attempt_number += 1
-                    print(f"Failed request: 404.\n Attempt {str(attempt_number)}/{str(6)}.", end="", flush=True)
+                    print(f"Status Code: 404.\n Attempt {str(attempt_number)}/{str(6)}.", end="", flush=True)
                     mercurial_type_index += 1
 
                     # Switch to other mercurial type:
@@ -169,9 +169,9 @@ class Mozilla_File_Function_Scraper:
 
                 # Case when status code other than 200 and 400:
                 else: # Handle case when request returns status code other than `200` and `400`
-                    print(f"Response code: [{str(response_status_code_a)}-{str(response_status_code_b)}].\nRetrying in 10 seconds...", end="", flush=True)
+                    print(f"Response code: [a-{str(response_status_code_a)} : b-{str(response_status_code_b)}].\nRetrying in 10 seconds...", end="", flush=True)
                     if attempt_number > max_retries:
-                        process_statuses.append(f"Response Code: [{str(response_status_code_a)}-{str(response_status_code_b)}]")
+                        process_statuses.append(f"Response Code: [a-{str(response_status_code_a)} : b-{str(response_status_code_b)}]")
                     
                     time.sleep(10)
                     attempt_number += 1
@@ -187,11 +187,12 @@ class Mozilla_File_Function_Scraper:
 
             # Case reaching the maximum attempt web request, then we assume this records have not been processed yet.
             else:
-                process_statuses = []
+                process_statuses.append("network issue")
                 return namedtuple('WebRequestRecord', field_name)(*("network issue", process_statuses, None, None, None, None))
             
             # Exit the function in the case request url failed.
             if response_status_code_a == 404 or response_status_code_b == 404:
+                process_statuses.append("404")
                 return namedtuple('WebRequestRecord', field_name)(*("404", process_statuses, None, None, None, None))
 
 
@@ -203,32 +204,12 @@ class Mozilla_File_Function_Scraper:
             list_of_functions_a = []
             list_of_functions_b = []
 
-            # Quoc: removed these testing codes:
-            response_a_text = '''
-                function function1(...) { statement0 }
-                (function(...)
-                {
-                    statement2
-                })(...);
-            '''
-            response_b_text = '''
-                function function1(...) { statement0 }
-                (function(...)
-                {
-                    statement1
-                })(...);
-
-                (function(...)
-                {
-                    statement2
-                })(...);
-            '''
 
             # Important: list in python have properties: Order Preservation and Allowing Duplicate Values
             match(file_extension):
                 case "js":
-                    list_of_functions_a = function_extractor.extract_js_functions(response_a_text) # if response_a else list_of_functions_a
-                    list_of_functions_b = function_extractor.extract_js_functions(response_b_text) if response_b else list_of_functions_b
+                    list_of_functions_a = function_extractor.extract_js_functions(response_a.text) if response_a else list_of_functions_a
+                    list_of_functions_b = function_extractor.extract_js_functions(response_b.text) if response_b else list_of_functions_b
                 case "c":
                     list_of_functions_a = function_extractor.extract_c_functions(response_a.text) if response_a else list_of_functions_a
                     list_of_functions_b = function_extractor.extract_c_functions(response_b.text) if response_b else list_of_functions_b
@@ -339,107 +320,74 @@ class Mozilla_File_Function_Scraper:
                     if web_request_function_data.list_of_functions_b:
                         dict_of_functions_b = {func_sign: re.sub(r'\s+', '', func_impl) for func_sign, func_impl in web_request_function_data.list_of_functions_b}
 
-                    #if "/dev/null" not in db_mozilla_changeset_file.previous_file_name and "/dev/null" not in db_mozilla_changeset_file.updated_file_name:
-                    if True:
+                    if len(web_request_function_data.list_of_functions_a) > 0 and len(web_request_function_data.list_of_functions_b) > 0:
                         # Create a copy of dict_function_count_a to track deleted functions.
-                        # remaining_count_a = web_request_function_data.dict_function_count_a.copy()
                         copy_function_count_a = web_request_function_data.dict_function_count_a.copy()
                         copy_function_count_b = web_request_function_data.dict_function_count_b.copy()
 
                         # Loop through functions in dict_of_functions_b and determine status (modified, unchanged, added).
                         for name_b, implementation_b in dict_of_functions_b.items():
                             original_func_name_b = get_original_func_name(name_b)
-                            count_b = copy_function_count_b[original_func_name_b]
+                            count_b = copy_function_count_b.get(original_func_name_b, 0)
 
                             if original_func_name_b in copy_function_count_a:
                                 # Check if we still have remaining instances in dict_of_functions_a for this function signature.
-                                count_a = copy_function_count_a[original_func_name_b]
+                                count_a = copy_function_count_a.get(original_func_name_b, 0)
 
                                 # If count_b == 1 and count_a == 1
                                 if count_b == 1 and count_a == 1:
-                                    if original_func_name_b not in web_request_function_data.dict_of_functions_a:
-                                        deleted_function_list.append(original_func_name_b)
-                                    elif web_request_function_data.dict_of_functions_a[original_func_name_b] != implementation_b:
-                                        modified_function_list.append(original_func_name_b)
-                                    elif web_request_function_data.dict_of_functions_a[original_func_name_b] == implementation_b:
-                                        unchanged_function_list(original_func_name_b)
+                                    if original_func_name_b not in dict_of_functions_a:
+                                        deleted_function_list.append(name_b)
+                                    elif dict_of_functions_a[original_func_name_b] != implementation_b:
+                                        modified_function_list.append(name_b)
+                                    elif dict_of_functions_a[original_func_name_b] == implementation_b:
+                                        unchanged_function_list.append(name_b)
 
                                 # If count_b >= 2 and count_a == 1
                                 elif count_b >= 2 and (count_a == 1 or count_a == 0):
                                     if count_a == 1:
-                                        if implementation_b == web_request_function_data.dict_of_functions_a[original_func_name_b]:
-                                            unchanged_function_list.append(implementation_b)
-                                            copy_function_count_a[original_func_name_a] -= 1
+                                        if implementation_b == dict_of_functions_a[original_func_name_b]:
+                                            unchanged_function_list.append(name_b)
+                                            copy_function_count_a[original_func_name_b] -= 1
                                         else:
                                             # Status for this could be 'modified' or 'added':
-                                            modified_function_list.append(implementation_b)
+                                            modified_function_list.append(name_b)
                                     elif count_a == 0:
-                                        added_function_list.append(implementation_b)
+                                        added_function_list.append(name_b)
 
                                 # If count_b >= 2 and count_a >= 2
                                 elif count_b >= 2 and count_a >= 2:
+                                    matched = False
                                     for name_a, implementation_a in dict_of_functions_a.items():
                                         original_func_name_a = get_original_func_name(name_a)
                                         
                                         if implementation_a == implementation_b:
-                                            unchanged_function_list.append(original_func_name_a)
+                                            unchanged_function_list.append(name_b)
+                                            matched = True
                                             break
                                         else:
                                             continue
-
-
-                                if count_a > 0:
-                                    # Compare this function implementation from dict_b with all corresponding function implementations in dict_a.
-                                    matched = False
-                                    if count_b == 1:
-                                    if count_b >= 2:
-                                    # Loop through functions in dict_of_functions_a:
-                                    for name_a, implementation_a in dict_of_functions_a.items():
-                                        original_func_name_a = get_original_func_name(name_a)
-
-                                        if original_func_name_a == original_func_name_b and implementation_a == implementation_b:
-                                            # It's an unchanged function (matching implementation found).
-                                            unchanged_function_list.append(original_func_name_a)
-                                            # remaining_count_a[original_func_name_a] -= 1  # Decrement the count of this function in dict a.
-                                            matched = True
-                                            break
-                                        
-                                        if count_a == 1:
-                                            break
-                                            
-                                    if not matched:
-                                        # If no matching implementation is found, consider it as a modified function.
-                                        modified_function_list.append(original_func_name_b)
-                                        # remaining_count_a[original_func_name_b] -= 1  # Decrement the count of this function in dict a.
-
-                                # Case: count_b >= 1 and count_a == 0
-                                else:
-                                    # This is an "added" function because no more matching instances exist in dict_a.
-                                    added_function_list.append(original_func_name_b)
+                                    
+                                    if matched == False:
+                                        # This case could be 'added' or 'modified':
+                                        modified_function_list.append(name_b)
                             else:
-                                # If original_func_name_b doesn't exist in dict_a, consider it an added function.
-                                added_function_list.append(original_func_name_b)
+                                added_function_list.append(name_b)
+                        
+                        # Need to take care of the case when count_a >= 1 and count_b == 0
+                        for name_a, implement_a in dict_of_functions_a.items():
+                            original_func_name_a = get_original_func_name(name_a)
+                            count_a = copy_function_count_a.get(original_func_name_a, 0)
+                            count_b = copy_function_count_b.get(original_func_name_a, 0)
 
-                        # After comparing with all items in dict_of_functions_b, any remaining counts in dict_a are deleted functions.
-                        for name_a, count_a in remaining_count_a.items():
-                            if count_a > 0:
-                                deleted_function_list.extend([name_a] * count_a)  # Add remaining count of deleted functions.
-
-
-
-
-
-
-
-
-
-
-                    else:
-                        # If the file is 'deleted' or newly 'added', then all the functions should have the status of "deleted" or "added":
-                        if "/dev/null" in db_mozilla_changeset_file.previous_file_name:
-                            added_function_list = list(dict_of_functions_b.keys())
-                        elif "/dev/null" in db_mozilla_changeset_file.updated_file_name:
-                            deleted_function_list = list(dict_of_functions_a.keys())
+                            if count_a >= 1 and count_b == 0:
+                                deleted_function_list.append(name_a)
+                    
+                    # If the file is 'deleted' or newly 'added', then all the functions should have the status of "deleted" or "added":
+                    elif len(web_request_function_data.list_of_functions_b) > 0:
+                        added_function_list = list(dict_of_functions_b.keys())
+                    elif len(web_request_function_data.list_of_functions_a) > 0:
+                        deleted_function_list = list(dict_of_functions_a.keys())
 
                     ## Prepare the query batches to save to the database:
                     insert_function_query_template = '''IF NOT EXISTS (SELECT 1 FROM [dbo].[Bugzilla_Mozilla_Functions] WHERE [Changeset_File_Unique_Hash] = ? AND [Function_Signature] = ?) INSERT INTO [dbo].[Bugzilla_Mozilla_Functions] ([Changeset_File_Unique_Hash], [Function_Signature], [Function_Status], [Inserted_On]) VALUES (?, ?, ?, GETUTCDATE());'''
@@ -521,7 +469,7 @@ class Mozilla_File_Function_Scraper:
                 db_mozilla_changeset_file = namedtuple('Record',
                         ['task_group', 'row_num', 'process_status', 'changeset_hash_id',
                          'previous_file_name', 'updated_file_name', 'file_status',
-                         'changeset_file_unique_hash', 'mercurial_type', 'child_hash'])(*records_to_be_processed[i])
+                         'changeset_file_unique_hash', 'mercurial_type', 'parent_hash'])(*records_to_be_processed[i])
                 
                 print(f"[{strftime('%m/%d/%Y %H:%M:%S', localtime())}] Task Group: {str(task_group)} [{str(start_row)}-{str(end_row)}]. Remainings: {str(remaining_records)}. Process row number {db_mozilla_changeset_file.row_num}...", end="", flush=True)
 
@@ -536,7 +484,7 @@ class Mozilla_File_Function_Scraper:
                 else:
                     if re_run_iteration_count <= 5:
                         print(f"{web_request_function_data.overall_status}. Go Sleep for 10s. Attempt: {re_run_iteration_count}/5.")
-                        sys.sleep(10)
+                        time.sleep(10)
                         re_run_iteration_count += 1
                     else:
                         print(f"Max attempt reach. Attempt: {re_run_iteration_count}/5. Skipped.")
@@ -557,8 +505,8 @@ if __name__ == "__main__":
 
     # Testing specific input arguments:
     task_group = 1   # Task group
-    start_row = 3   # Start row
-    end_row = 3   # End row
+    start_row = 1108   # Start row
+    end_row = 1108   # End row
     scraper = Mozilla_File_Function_Scraper()
     scraper.run_scraper(task_group, start_row, end_row)
 

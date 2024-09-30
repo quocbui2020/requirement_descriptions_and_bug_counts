@@ -32,7 +32,7 @@ class ExtractFunctionFromFileContentHelper:
         
         return self.remove_comments(file_type='py', content=content)
     
-    def extract_python_functions(self, content):
+    def extract_py_functions(self, content):
         """
         Extract all Python functions.
         
@@ -292,19 +292,19 @@ class ExtractFunctionFromFileContentHelper:
                     tracker['begin_new_line_index'] = i
 
                 ## Handle cases:
-                # let/const function_name = function(...) {...}
-                # let/const function_name = async function(...) => {...}
-                # let/const function_name = async (...) => {...}
-                # let/const function_name = (...) => {...}
-                elif content[i] in {'c', 'l'} and i-1 != -1 and (content[i-1].isspace()) and i+6 < tracker['last_char_index']:
-                    if content[i:i+6] == 'const ' or content[i:i+4] == 'let ':
+                # var/let/const function_name = function(...) {...}
+                # var/let/const function_name = async function(...) => {...}
+                # var/let/const function_name = async (...) => {...}
+                # var/let/const function_name = (...) => {...}
+                elif content[i] in {'c', 'l', 'v'} and i-1 != -1 and (content[i-1].isspace()) and i+6 < tracker['last_char_index']:
+                    if content[i:i+6] == 'const ' or content[i:i+4] in {'let ', 'var '}:
                         # Detect let or const
                         tracker['potential_begin_function_index'] = i
 
-                        # Skip past 'const' or 'let'
+                        # Skip past 'const', 'let', or 'var':
                         i = i+6 if content[i:i+6] == 'const ' else i+4
 
-                        # Skip spaces after 'const' or 'let'
+                        # Skip spaces after 'const', 'let', or 'var':
                         while i <= tracker['last_char_index'] and content[i] == ' ':
                             i += 1
 
@@ -530,7 +530,7 @@ class ExtractFunctionFromFileContentHelper:
 
                     i = interested_open_parenthesis_index + 1
 
-                    # Skip spaces forward:
+                    # Skip spaces forward after '(':
                     while i <= tracker['last_char_index'] and content[i] == ' ':
                         i += 1
 
@@ -619,6 +619,8 @@ class ExtractFunctionFromFileContentHelper:
                             else:
                                 # Reset the flag:
                                 tracker['potential_begin_function_index'] = -1
+                    else:
+                        i -= 1 # Prevent it from skipping a character.
                 else:
                     pass
 
