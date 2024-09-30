@@ -169,9 +169,9 @@ class Mozilla_File_Function_Scraper:
 
                 # Case when status code other than 200 and 400:
                 else: # Handle case when request returns status code other than `200` and `400`
-                    print(f"Response code: [a-{str(response_status_code_a)} : b-{str(response_status_code_b)}].\nRetrying in 10 seconds...", end="", flush=True)
+                    print(f"Response code: [a:{str(response_status_code_a)} && b:{str(response_status_code_b)}].\nRetrying in 10 seconds...", end="", flush=True)
                     if attempt_number > max_retries:
-                        process_statuses.append(f"Response Code: [a-{str(response_status_code_a)} : b-{str(response_status_code_b)}]")
+                        process_statuses.append(f"Response code: [a:{str(response_status_code_a)} && b:{str(response_status_code_b)}]")
                     
                     time.sleep(10)
                     attempt_number += 1
@@ -507,7 +507,7 @@ if __name__ == "__main__":
     # task_group = 1   # Task group
     # start_row = 1108   # Start row
     # end_row = 1108   # End row
-    
+
     scraper = Mozilla_File_Function_Scraper()
     scraper.run_scraper(task_group, start_row, end_row)
 
