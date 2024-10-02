@@ -488,6 +488,8 @@ class Mozilla_File_Function_Scraper:
                         re_run_iteration_count += 1
                     else:
                         print(f"Max attempt reach. Attempt: {re_run_iteration_count}/5. Skipped.")
+
+            remaining_records -= 1
                         
 
 
