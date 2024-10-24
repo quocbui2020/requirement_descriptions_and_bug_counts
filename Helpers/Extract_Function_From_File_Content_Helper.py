@@ -534,7 +534,7 @@ class ExtractFunctionFromFileContentHelper:
                     while i <= tracker['last_char_index'] and content[i] == ' ':
                         i += 1
 
-                    # Detect 'function' or 'async' keywords or '(...)' pattern:
+                    # Detect 'function' or 'async' keywords or '(...)' pattern after the first '(':
                     if i+8 < tracker['last_char_index'] and ((content[i:i+8] == 'function' and not content[i+8].isalpha()) or (content[i:i+5] == 'async' and not content[i+5].isalpha()) or content[i] == '('):
                         missing_arrow_indicator = False # This flag indicates we are looking for "=>" to confirm it is a function
 
@@ -551,7 +551,18 @@ class ExtractFunctionFromFileContentHelper:
 
                         # Skip to the opening parenthesis '('. There could be spacing in between:
                         while i <= tracker['last_char_index'] and content[i] != '(':
+                            # case: async x => ..., we should ignore these function because it's short enough:
+                            if i < tracker['last_char_index'] and content[i:i+2] == '=>':
+                                is_confirmed_function = False
+                                break
                             i += 1
+
+                        # If we reach the last index at this point, we may as well return, shouldn't continue.
+                        if i == tracker['last_char_index']:
+                            return list_of_js_functions
+                        elif is_confirmed_function == False:
+                            i += 1
+                            continue
 
                         # Track parentheses to extract the full signature
                         saved_missing_closed_parentheses_inside_func_params = tracker['missing_closed_parentheses']
@@ -621,6 +632,13 @@ class ExtractFunctionFromFileContentHelper:
                                 tracker['potential_begin_function_index'] = -1
                     else:
                         i -= 1 # Prevent it from skipping a character.
+                
+                # Handle the occured problem when the content has "()", it didn't decrease the 'missing_closed_parentheses' properly:
+                # Issue found in: task_group=3 and row=50011
+                elif content[i] == ')':
+                    if tracker['missing_closed_parentheses'] > 0:
+                        tracker['missing_closed_parentheses'] -= 1
+                
                 else:
                     pass
 

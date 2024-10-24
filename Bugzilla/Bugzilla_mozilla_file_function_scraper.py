@@ -134,8 +134,8 @@ class Mozilla_File_Function_Scraper:
 
                 try:
                     # Make web requests:
-                    response_a = requests.get(request_url_a) if request_url_a and not response_a else response_a
-                    response_b = requests.get(request_url_b) if request_url_b and not response_b else response_b
+                    response_a = requests.get(url=request_url_a, timeout=10000) if request_url_a and not response_a else response_a
+                    response_b = requests.get(url=request_url_b, timeout=10000) if request_url_b and not response_b else response_b
 
                     response_status_code_a = response_a.status_code if response_a != None else -1 # Note, the phrase `response_a is truthy` also means if it doesn't have response code of 200
                     response_status_code_b = response_b.status_code if response_b != None else -1
@@ -199,12 +199,12 @@ class Mozilla_File_Function_Scraper:
             #######################################################################################
             # Assuming that all the codes at this point means the web requests being made successful.
             #######################################################################################
-            # Identify the file code:
+           
             function_extractor = ExtractFunctionHelper.ExtractFunctionFromFileContentHelper()
             list_of_functions_a = []
             list_of_functions_b = []
 
-
+            # Identify the file code:
             # Important: list in python have properties: Order Preservation and Allowing Duplicate Values
             match(file_extension):
                 case "js":
@@ -221,7 +221,7 @@ class Mozilla_File_Function_Scraper:
                     list_of_functions_b = function_extractor.extract_py_functions(response_b.text) if response_b else list_of_functions_b
                 case _: # Default case
                     process_statuses.append("Not js,c,cpp,py Files")
-                    return namedtuple('WebRequestRecord', field_name)(*("Incorrect file extension", process_statuses, None, None, None, None))
+                    return namedtuple('WebRequestRecord', field_name)(*("Uninteresting File", process_statuses, None, None, None, None))
 
             # Handle the case if the file has multiple similar function names:
             dict_function_count_a = {}
@@ -475,7 +475,8 @@ class Mozilla_File_Function_Scraper:
 
                 web_request_function_data = self.scrap_mozilla_function_data(db_mozilla_changeset_file)
 
-                if web_request_function_data.overall_status in {"successful", "404" }:
+                # overall statuses: {'Uninteresting File', 'network issue', '404', 'successful'}
+                if web_request_function_data.overall_status in {"successful", "404", "Uninteresting File" }:
                     self.save_bugzilla_mozilla_functions(db_mozilla_changeset_file, web_request_function_data)
                     print(f"{web_request_function_data.overall_status}")
                     break
@@ -507,8 +508,8 @@ if __name__ == "__main__":
 
     # Testing specific input arguments:
     # task_group = 1   # Task group
-    # start_row = 1108   # Start row
-    # end_row = 1108   # End row
+    # start_row = 75302   # Start row
+    # end_row = 75302   # End row
 
     scraper = Mozilla_File_Function_Scraper()
     scraper.run_scraper(task_group, start_row, end_row)
