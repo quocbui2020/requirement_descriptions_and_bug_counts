@@ -292,7 +292,7 @@ class Mozilla_File_Function_Scraper:
             batches = []
             db_queries = ''
             query_count = 0
-            query_size_limit = 100
+            query_size_limit = 50
 
             # Containers used for saving to database:
             deleted_function_list = []
@@ -508,8 +508,8 @@ if __name__ == "__main__":
 
     # Testing specific input arguments:
     # task_group = 1   # Task group
-    # start_row = 75302   # Start row
-    # end_row = 75302   # End row
+    # start_row = 2809   # Start row
+    # end_row = 2809   # End row
 
     scraper = Mozilla_File_Function_Scraper()
     scraper.run_scraper(task_group, start_row, end_row)
