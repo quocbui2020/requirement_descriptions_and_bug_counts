@@ -428,6 +428,7 @@ class Mozilla_File_Function_Scraper:
                 # Start transactions:
                 cursor.execute("BEGIN TRANSACTION")
 
+                # quoc: if this failed, don't start over.
                 # Execute batches of queries
                 for batch_query, batch_params in batches:
                     cursor.execute(batch_query, batch_params)
@@ -443,7 +444,7 @@ class Mozilla_File_Function_Scraper:
                 conn.rollback()  # Ensure the rollback is completed
 
                 attempt_number += 1
-                print(f"pyodbc.Error.\nAttempt number: {attempt_number}. Retrying in 10 seconds...", end="", flush=True)
+                print(f"pyodbc.Error:{e}.\nAttempt number: {attempt_number}. Retrying in 10 seconds...", end="", flush=True)
                 time.sleep(10)
 
                 if attempt_number >= max_retries:
@@ -497,19 +498,19 @@ class Mozilla_File_Function_Scraper:
 #########################################################################
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="")
-    parser.add_argument('arg_1', type=int, help='Argument 1')
-    parser.add_argument('arg_2', type=int, help='Argument 2')
-    parser.add_argument('arg_3', type=int, help='Argument 3')
-    parser_args = parser.parse_args()
-    task_group = parser_args.arg_1
-    start_row = parser_args.arg_2
-    end_row = parser_args.arg_3
+    # parser = argparse.ArgumentParser(description="")
+    # parser.add_argument('arg_1', type=int, help='Argument 1')
+    # parser.add_argument('arg_2', type=int, help='Argument 2')
+    # parser.add_argument('arg_3', type=int, help='Argument 3')
+    # parser_args = parser.parse_args()
+    # task_group = parser_args.arg_1
+    # start_row = parser_args.arg_2
+    # end_row = parser_args.arg_3
 
     # Testing specific input arguments:
-    # task_group = 1   # Task group
-    # start_row = 2809   # Start row
-    # end_row = 2809   # End row
+    task_group = 1   # Task group
+    start_row = 2941   # Start row
+    end_row = start_row   # End row
 
     scraper = Mozilla_File_Function_Scraper()
     scraper.run_scraper(task_group, start_row, end_row)
