@@ -70,7 +70,7 @@ class Automation:
                 bug_id_pairs = bug_ids.split(" | ")
                 for pair in bug_id_pairs:
                     if ':' in pair:
-                        bug_id, type_ = pair.split(':')
+                        bug_id, type_ = pair.split(':')[:2] # if bad data: pair="960276:InTitle:InTitle", then just take the first 2 values in the string.
                     else:
                         bug_id = pair
                         type_ = "InTitle"  # Default type if no label exists
