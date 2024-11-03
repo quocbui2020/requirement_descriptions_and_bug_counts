@@ -428,6 +428,7 @@ class Mozilla_File_Function_Scraper:
                 # Start transactions:
                 cursor.execute("BEGIN TRANSACTION")
 
+                # quoc: if this failed, don't start over.
                 # Execute batches of queries
                 for batch_query, batch_params in batches:
                     cursor.execute(batch_query, batch_params)
@@ -443,7 +444,7 @@ class Mozilla_File_Function_Scraper:
                 conn.rollback()  # Ensure the rollback is completed
 
                 attempt_number += 1
-                print(f"pyodbc.Error.\nAttempt number: {attempt_number}. Retrying in 10 seconds...", end="", flush=True)
+                print(f"pyodbc.Error:{e}.\nAttempt number: {attempt_number}. Retrying in 10 seconds...", end="", flush=True)
                 time.sleep(10)
 
                 if attempt_number >= max_retries:
@@ -508,8 +509,8 @@ if __name__ == "__main__":
 
     # Testing specific input arguments:
     # task_group = 1   # Task group
-    # start_row = 2809   # Start row
-    # end_row = 2809   # End row
+    # start_row = 116855   # Start row
+    # end_row = start_row   # End row
 
     scraper = Mozilla_File_Function_Scraper()
     scraper.run_scraper(task_group, start_row, end_row)

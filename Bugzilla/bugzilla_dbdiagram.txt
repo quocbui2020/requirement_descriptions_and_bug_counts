@@ -21,11 +21,18 @@ Table "Bugzilla" {
 }
 
 Table "Bugzilla_Mozilla_Changeset_Files" {
+  "Unique_Hash" varchar
   "Changeset_Hash_ID" varchar(40) [not null]
   "Previous_File_Name" varchar(1000) [not null]
   "Updated_File_Name" varchar(1000) [not null]
   "File_Status" varchar(100) [not null]
   "Inserted_On" datetime [not null]
+  "Task_Group" smallint
+  "Row_Num" int
+  "Process_Status" varchar(200)
+  Indexes {
+    Unique_Hash [pk]
+  }
 }
 Ref: Bugzilla_Mozilla_Changeset_Files.Changeset_Hash_ID > Bugzilla_Mozilla_Changesets.Hash_Id
 
@@ -113,4 +120,30 @@ Table "Bugzilla_Error_Log" {
     ID [pk]
   }
 }
+
+
+Table "Bugzilla_Mozilla_Changeset_BugIds" {
+  "Unique_Hash" varchar
+  "Changeset_Hash_ID" varchar(40)
+  "Bug_ID" varchar(50)
+  "Type" varchar(50)
+  Indexes {
+    Unique_Hash [pk]
+  }
+}
+ref: Bugzilla_Mozilla_Changeset_BugIds.Changeset_Hash_ID > Bugzilla_Mozilla_Changesets.Hash_Id
+ref: Bugzilla_Mozilla_Changeset_BugIds.Changeset_Hash_ID > Bugzilla.id
+
+
+Table "Bugzilla_Mozilla_Functions" {
+  "Unique_Hash" varchar
+  "Changeset_File_Unique_Hash" varbinary(8000) [not null]
+  "Function_Signature" varchar(5000) [not null]
+  "Function_Status" varchar(100) [not null]
+  "Inserted_On" datetime [not null]
+  Indexes {
+    Unique_Hash [pk]
+  }
+}
+ref: Bugzilla_Mozilla_Functions.Changeset_File_Unique_Hash - Bugzilla_Mozilla_Changeset_Files.Unique_Hash
 
