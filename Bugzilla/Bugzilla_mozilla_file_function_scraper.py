@@ -1,5 +1,6 @@
 import sys
 import os
+import json
 import traceback
 import time
 import requests
@@ -35,8 +36,28 @@ class Mozilla_File_Function_Scraper:
             try:
                 conn = pyodbc.connect(conn_str)
                 cursor = conn.cursor()
+                # cursor.execute('''
+                #     SELECT cf.Task_Group
+                #         ,cf.Row_Num
+                #         ,cf.Process_Status
+                #         ,cf.Changeset_Hash_ID
+                #         ,cf.Previous_File_Name
+                #         ,cf.Updated_File_Name
+                #         ,cf.File_Status
+                #         ,cf.Unique_Hash --Changeset File's Unique Hash
+                #         ,c.Mercurial_Type
+                #         ,c.Parent_Hashes
+                #     FROM Bugzilla_Mozilla_Changeset_Files cf
+                #     INNER JOIN Bugzilla_Mozilla_Changesets c ON c.Hash_Id = cf.Changeset_Hash_ID
+                #     WHERE cf.Task_Group = ?
+                #     AND cf.Row_Num BETWEEN ? AND ?
+                #     AND cf.Process_Status IS NULL -- Null status mean the records have not been processed.
+                #     ORDER BY cf.Task_Group ASC, cf.Row_Num ASC
+                # ''', (task_group, start_row, end_row))
+                
+                # get records associate with CVE:
                 cursor.execute('''
-                    SELECT cf.Task_Group
+                    SELECT distinct cf.Task_Group
                         ,cf.Row_Num
                         ,cf.Process_Status
                         ,cf.Changeset_Hash_ID
@@ -48,11 +69,14 @@ class Mozilla_File_Function_Scraper:
                         ,c.Parent_Hashes
                     FROM Bugzilla_Mozilla_Changeset_Files cf
                     INNER JOIN Bugzilla_Mozilla_Changesets c ON c.Hash_Id = cf.Changeset_Hash_ID
-                    WHERE cf.Task_Group = ?
-                    AND cf.Row_Num BETWEEN ? AND ?
+                    INNER JOIN Bugzilla_Mozilla_Changeset_BugIds bmb on bmb.Changeset_Hash_ID = c.Hash_Id
+                    INNER JOIN Bugzilla b on b.Id = bmb.Bug_ID
+                        AND alias like 'CVE%'
+                    WHERE 1=1
                     AND cf.Process_Status IS NULL -- Null status mean the records have not been processed.
+                    AND cf.Task_Group BETWEEN ? AND ? 
                     ORDER BY cf.Task_Group ASC, cf.Row_Num ASC
-                ''', (task_group, start_row, end_row))
+                ''', (start_row, end_row))
                 
                 rows = cursor.fetchall()
                 return rows
@@ -260,11 +284,45 @@ class Mozilla_File_Function_Scraper:
             exit() # During code development, let exit() if encountered unknown exception
             # return ("human intervention - genetic exception", process_statuses, None, None)
     
+    # Save data to the json files (backup storage):
+    def save_queries_to_json(self, task_group, row_num, batches):
+        # Helper function to convert bytes to hex
+        def convert_bytes_to_hex(data):
+            if isinstance(data, bytes):
+                return data.hex()
+            elif isinstance(data, list):
+                return [convert_bytes_to_hex(item) for item in data]
+            elif isinstance(data, dict):
+                return {key: convert_bytes_to_hex(value) for key, value in data.items()}
+            return data
+
+        # Get the directory of the current script:
+        script_dir = os.path.dirname(os.path.abspath(__file__))
+
+        # Define the folder path based on today's date
+        date_folder_name = datetime.now().strftime("%m_%d_%Y")
+        base_dir = os.path.join(script_dir, "csv_files", date_folder_name)
+
+        # Create the folder if it doesn't exist
+        if not os.path.exists(base_dir):
+            os.makedirs(base_dir)
+
+        # Define the JSON file path
+        json_file_path = os.path.join(base_dir, f"{task_group}_{row_num}.json")
+
+        # Convert batches into a list of dictionaries
+        batch_data = [{"parameters": convert_bytes_to_hex(params)} for query, params in batches]
+
+        # Write to JSON file
+        with open(json_file_path, "w") as json_file:
+            json.dump(batch_data, json_file, indent=4)
+
     def save_bugzilla_mozilla_functions(self, db_mozilla_changeset_file, web_request_function_data):
         attempt_number = 1
         max_retries = 10 # max retry for database issue.
         max_connection_attempts = 10  # Number of max attempts to establish a connection.
-        
+        is_conn_open = False
+
         while attempt_number <= max_retries:
             connection_attempt = 1
             while connection_attempt <= max_connection_attempts:
@@ -282,6 +340,7 @@ class Mozilla_File_Function_Scraper:
                 raise Exception("Failed to establish a connection after multiple attempts.")
             
             cursor = conn.cursor()
+            is_conn_open = True
 
             # Reminder: dictionary can be used to access value by key: dictionary[key] => value
             dict_of_functions_a = {}
@@ -312,6 +371,7 @@ class Mozilla_File_Function_Scraper:
             def get_original_func_name(func_name):
                 # Return function name without the prefix, e.g., "2-functionA(params)" -> "functionA(params)"
                 return func_name.split("-", 1)[-1] if "-" in func_name else func_name
+            
             try:
                 if (web_request_function_data.overall_status == "successful"):
                     # Remove all spacings, new lines characters:
@@ -424,39 +484,116 @@ class Mozilla_File_Function_Scraper:
                 # Add any remaining queries to the last batch:
                 if db_queries:
                     batches.append((db_queries, params))
-                    
-                # Start transactions:
-                cursor.execute("BEGIN TRANSACTION")
 
-                # quoc: if this failed, don't start over.
-                # Execute batches of queries
-                for batch_query, batch_params in batches:
-                    cursor.execute(batch_query, batch_params)
+                try_again = "first try"
+                save_data_attempt_number = 1
+                while try_again == "first try" or try_again == "true":
+                    try:
+                        if is_conn_open == False:
+                            conn = pyodbc.connect(conn_str)
+                            cursor = conn.cursor()
+                            is_conn_open = True
 
-                # Commit the transaction
-                cursor.execute("COMMIT")
-                conn.commit()
-                return
+                        # Start transactions:
+                        cursor.execute("BEGIN TRANSACTION")
 
-            except pyodbc.Error as e:
-                error_code = e.args[0]
-                cursor.execute("ROLLBACK TRANSACTION")  # Rollback transaction
-                conn.rollback()  # Ensure the rollback is completed
+                        # Execute batches of queries
+                        for batch_query, batch_params in batches:
+                            cursor.execute(batch_query, batch_params)
 
-                attempt_number += 1
-                print(f"pyodbc.Error:{e}.\nAttempt number: {attempt_number}. Retrying in 10 seconds...", end="", flush=True)
-                time.sleep(10)
+                        # Commit the transaction
+                        cursor.execute("COMMIT")
+                        conn.commit()
 
+                        # Free resource for other processes b/c we don't want a process to hold resource for too long
+                        cursor.close()
+                        conn.close()
+                        is_conn_open = False
+
+                        if batches:
+                            # Re-establish new cursor and conn:
+                            conn = pyodbc.connect(conn_str)
+                            cursor = conn.cursor()
+
+                            # Check to see if the data actually being save:
+                            cursor.execute('''
+                                select top 1 process_status
+                                from Bugzilla_Mozilla_Changeset_Files
+                                where Row_Num=?
+                                    and Task_Group=?;
+                                ''',(db_mozilla_changeset_file.row_num, db_mozilla_changeset_file.task_group))
+                            
+                            process_status_after_db_saved = cursor.fetchone()
+                            
+                            if process_status_after_db_saved and process_status_after_db_saved[0] is not None:
+                                try_again = "false"
+                                return
+                            else:
+                                if save_data_attempt_number <= 3:
+                                    try_again = "true"
+                                    print(f"Attempt: {str(save_data_attempt_number)}/3. Data save failed.", end="", flush=True)
+                                    save_data_attempt_number += 1
+                                else:
+                                    # Closed cursor and conn first:
+                                    cursor.close()
+                                    conn.close()
+                                    is_conn_open = False
+
+                                    # Save data to the second storage: json file:
+                                    self.save_queries_to_json(db_mozilla_changeset_file.task_group, db_mozilla_changeset_file.row_num, batches)
+                                    try_again = "false"
+                                    print(f"\nData save failed after {save_data_attempt_number} attempts. Data saved to JSON file...", end="\n", flush=True)
+
+                                    # Re-open connection to update process status:
+                                    conn = pyodbc.connect(conn_str)
+                                    cursor = conn.cursor()
+
+                                    cursor.execute('''
+                                        UPDATE Bugzilla_Mozilla_Changeset_Files
+                                            SET process_status = 'json_file'
+                                        where Row_Num = ?
+                                            and Task_Group = ?
+                                            and process_status is null;
+                                        ''',(db_mozilla_changeset_file.row_num, db_mozilla_changeset_file.task_group))
+                                    
+                                    conn.commit()
+
+                    except pyodbc.Error as e:
+                        cursor.execute("ROLLBACK TRANSACTION")  # Rollback transaction
+                        conn.rollback()  # Ensure the rollback is completed
+
+                        attempt_number += 1
+                        print(f"pyodbc.Error:{e}.\nAttempt number: {attempt_number}. Retrying in 10 seconds...", end="\r", flush=True)
+                        time.sleep(10)
+
+                        if attempt_number >= max_retries:
+                            print(f"Max attempt reached. Skipped", end="", flush=True)
+                            try_again = "false"
+                        else:
+                            try_again = "true"
+                    finally:
+                        # Close the cursor and connection.
+                        try:
+                            cursor.close()
+                            conn.close()
+                            is_conn_open = False
+                        except:
+                            pass
+                            
+            # How to deal with generic error:
+            except: 
                 if attempt_number >= max_retries:
                     print(f"Max attempt reached. Skipped", end="", flush=True)
                     continue
             
             finally:
                 # Close the cursor and connection
-                cursor.close()
-                conn.close()
-
-            # TODO: Handle error: if it can't insert because of duplicate PK. We don't want it to stop the craper
+                try:
+                    cursor.close()
+                    conn.close()
+                    is_conn_open = False
+                except:
+                    pass
 
     def run_scraper(self, task_group, start_row, end_row):
         records_to_be_processed = self.get_records_to_process(task_group, start_row, end_row)
@@ -508,8 +645,8 @@ if __name__ == "__main__":
     end_row = parser_args.arg_3
 
     # Testing specific input arguments:
-    # task_group = 1   # Task group
-    # start_row = 116855   # Start row
+    # task_group = 0   # Task group
+    # start_row = 9   # Start row
     # end_row = start_row   # End row
 
     scraper = Mozilla_File_Function_Scraper()
