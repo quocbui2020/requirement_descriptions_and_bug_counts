@@ -529,7 +529,7 @@ class Mozilla_File_Function_Scraper:
                                 try_again = "false"
                                 return
                             else:
-                                if save_data_attempt_number <= 3:
+                                if save_data_attempt_number < 1:
                                     try_again = "true"
                                     print(f"Attempt: {str(save_data_attempt_number)}/3. Data save failed.", end="", flush=True)
                                     save_data_attempt_number += 1
