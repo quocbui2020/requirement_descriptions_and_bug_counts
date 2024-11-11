@@ -99,7 +99,7 @@ def BugzillaCrawler():
 
             if response.status_code == 200:
                 global_limit = 1200
-                break;
+                break
             
             if x == 0:
                 print("Failed main API call. Go sleep for 60 seconds...")
