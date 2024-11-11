@@ -301,7 +301,7 @@ class Mozilla_File_Function_Scraper:
 
         # Define the folder path based on today's date
         date_folder_name = datetime.now().strftime("%m_%d_%Y")
-        base_dir = os.path.join(script_dir, "csv_files", date_folder_name)
+        base_dir = os.path.join(script_dir, "..", "..", "..", "csv_files", date_folder_name)
 
         # Create the folder if it doesn't exist
         if not os.path.exists(base_dir):
@@ -494,6 +494,29 @@ class Mozilla_File_Function_Scraper:
                             cursor = conn.cursor()
                             is_conn_open = True
 
+                        # Note: set this to 'True' if we want to save data to json files without even attempt save data to SQL server:
+                        if False:
+                            # Save data to the second storage: json file:
+                            self.save_queries_to_json(db_mozilla_changeset_file.task_group, db_mozilla_changeset_file.row_num, batches)
+                            try_again = "false"
+                            print(f"\nData save failed after {save_data_attempt_number} attempts. Data saved to JSON file...", end="\n", flush=True)
+
+                            # Re-open connection to update process status:
+                            conn = pyodbc.connect(conn_str)
+                            cursor = conn.cursor()
+
+                            cursor.execute('''
+                                UPDATE Bugzilla_Mozilla_Changeset_Files
+                                    SET process_status = 'json_file'
+                                where Row_Num = ?
+                                    and Task_Group = ?
+                                    and process_status is null;
+                                ''',(db_mozilla_changeset_file.row_num, db_mozilla_changeset_file.task_group))
+                            
+                            conn.commit()
+                            return
+
+
                         # Start transactions:
                         cursor.execute("BEGIN TRANSACTION")
 
@@ -567,8 +590,35 @@ class Mozilla_File_Function_Scraper:
                         time.sleep(10)
 
                         if attempt_number >= max_retries:
-                            print(f"Max attempt reached. Skipped", end="", flush=True)
+                            # if reach max re-try for deadlock error, save data to json file
                             try_again = "false"
+                            if batches:
+                                try:
+                                    # Closed cursor and conn first:
+                                    cursor.close()
+                                    conn.close()
+                                    is_conn_open = False
+                                except:
+                                    pass
+
+                                # Save data to the second storage: json file:
+                                self.save_queries_to_json(db_mozilla_changeset_file.task_group, db_mozilla_changeset_file.row_num, batches)
+                                try_again = "false"
+                                print(f"\nData save failed after {save_data_attempt_number} attempts. Data saved to JSON file...", end="\n", flush=True)
+
+                                # Re-open connection to update process status:
+                                conn = pyodbc.connect(conn_str)
+                                cursor = conn.cursor()
+
+                                cursor.execute('''
+                                    UPDATE Bugzilla_Mozilla_Changeset_Files
+                                        SET process_status = 'json_file'
+                                    where Row_Num = ?
+                                        and Task_Group = ?
+                                        and process_status is null;
+                                    ''',(db_mozilla_changeset_file.row_num, db_mozilla_changeset_file.task_group))
+                                
+                                conn.commit()
                         else:
                             try_again = "true"
                     finally:
@@ -646,7 +696,7 @@ if __name__ == "__main__":
 
     # Testing specific input arguments:
     # task_group = 0   # Task group
-    # start_row = 9   # Start row
+    # start_row = 2   # Start row
     # end_row = start_row   # End row
 
     scraper = Mozilla_File_Function_Scraper()
