@@ -26,11 +26,14 @@ Table "Bugzilla_Mozilla_Changeset_Files" {
   "Previous_File_Name" varchar(1000) [not null]
   "Updated_File_Name" varchar(1000) [not null]
   "File_Status" varchar(100) [not null]
+  "Previous_File_Link" varchar(2000)
+  "Updated_File_Link" varchar(2000)
   "Inserted_On" datetime [not null]
   "Task_Group" smallint
   "Row_Num" int
   "Process_Status" varchar(200)
   Indexes {
+    // (hashbytes('SHA2_256',concat([Changeset_Hash_ID],[Previous_File_Name],[Updated_File_Name])))
     Unique_Hash [pk]
   }
 }
@@ -146,4 +149,3 @@ Table "Bugzilla_Mozilla_Functions" {
   }
 }
 ref: Bugzilla_Mozilla_Functions.Changeset_File_Unique_Hash - Bugzilla_Mozilla_Changeset_Files.Unique_Hash
-
