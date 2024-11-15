@@ -118,9 +118,9 @@ class Automation:
                 INNER JOIN Bugzilla_Mozilla_Changesets c 
                     ON c.Hash_Id = cf.Changeset_Hash_ID
                 WHERE 
-                    (CHARINDEX('.', cf.Previous_File_Name) > 0 OR CHARINDEX('.', cf.Updated_File_Name) > 0)
-                    AND Previous_File_Link IS NULL
-                    AND (c.Parent_Hashes IS NOT NULL AND CHARINDEX('|', c.Parent_Hashes) = 0)
+                    (CHARINDEX('.', cf.Previous_File_Name) > 0 OR CHARINDEX('.', cf.Updated_File_Name) > 0) -- Ensure correct file names (have at least a character '.')
+                    AND Previous_File_Link IS NULL -- Retrieve records have not been processed.
+                    AND (c.Parent_Hashes IS NOT NULL AND CHARINDEX('|', c.Parent_Hashes) = 0) -- Retrieve only records that have one and only one parent hashes.
             ''')
 
             rows = cursor.fetchall()
