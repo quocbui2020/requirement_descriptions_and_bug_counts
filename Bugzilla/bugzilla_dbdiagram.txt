@@ -19,6 +19,7 @@ Table "Bugzilla" {
     id [pk]
   }
 }
+Ref: Bugzilla.alias - CVE_Vulnerabilities.CVE_ID
 
 Table "Bugzilla_Mozilla_Changeset_Files" {
   "Unique_Hash" varchar
@@ -149,3 +150,20 @@ Table "Bugzilla_Mozilla_Functions" {
   }
 }
 ref: Bugzilla_Mozilla_Functions.Changeset_File_Unique_Hash - Bugzilla_Mozilla_Changeset_Files.Unique_Hash
+
+Table "CVE_Vulnerabilities" {
+  "CVE_ID" varchar(200) [not null]
+  "CWE_ID" varchar(200)
+  "Description" varchar(2000)
+  "CVSS_Metric_BaseScores" varchar(2000)
+  "CVE_Published_On" varchar(200)
+  "CVE_Last_Modified" varchar(200)
+  "CVE_Vuln_Status" varchar(200)
+  "Source_Identifier" varchar(200)
+  "CVE_API_Response" varchar(max)
+  "Inserted_On" datetime
+
+  Indexes {
+    CVE_ID [pk]
+  }
+}
