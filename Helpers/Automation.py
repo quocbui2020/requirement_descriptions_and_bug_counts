@@ -1,4 +1,4 @@
-# This file dedicated for 
+# This file dedicated for small automation tasks:
 
 import sys
 import os
@@ -99,6 +99,97 @@ class Automation:
             cursor.close()
             conn.close()
 
+
+    def compute_file_links(self):
+        conn = None
+        try:
+            conn = pyodbc.connect(conn_str)
+            cursor = conn.cursor()
+
+            print("Retrieving processed records...", end="", flush=True)
+            cursor.execute('''
+                SELECT cf.Unique_Hash,
+                    cf.Previous_File_Name,
+                    cf.Updated_File_Name,
+                    c.Mercurial_Type,
+                    cf.Changeset_Hash_ID,
+                    c.Parent_Hashes
+                FROM Bugzilla_Mozilla_Changeset_Files cf
+                INNER JOIN Bugzilla_Mozilla_Changesets c 
+                    ON c.Hash_Id = cf.Changeset_Hash_ID
+                WHERE 
+                    (CHARINDEX('.', cf.Previous_File_Name) > 0 OR CHARINDEX('.', cf.Updated_File_Name) > 0) -- Ensure correct file names (have at least a character '.')
+                    AND Previous_File_Link IS NULL -- Retrieve records have not been processed.
+                    AND (c.Parent_Hashes IS NOT NULL AND CHARINDEX('|', c.Parent_Hashes) = 0) -- Retrieve only records that have one and only one parent hashes.
+            ''')
+
+            rows = cursor.fetchall()
+            print("Complete")
+
+            record_count = len(rows)
+            link_format = "https://hg.mozilla.org/{mercurial_type}/raw-file/{changeset_hash_id}/{file_path}"
+
+            def generate_file_link(mercurial_type, changeset_hash_id, file_path):
+                return link_format.format(
+                    mercurial_type=mercurial_type,
+                    changeset_hash_id=changeset_hash_id,
+                    file_path=file_path[2:]  # Remove "a/" or "b/" prefixes
+                )
+
+            for row in rows:
+                unique_hash, prev_file, updated_file, mercurial_type, changeset_id, parent_hashes = row
+                previous_file_links, updated_file_links = [], []
+
+                print(
+                    f"[{strftime('%m/%d/%Y %H:%M:%S', localtime())}] Remaining Records: {record_count}", 
+                    end="\r", 
+                    flush=True
+                )
+
+                if mercurial_type:
+                    mercurial_type_list = mercurial_type.split(" | ")
+
+                    # Generate Previous File Links
+                    if prev_file and prev_file[:2] == 'a/':
+                        previous_file_links = [
+                            generate_file_link(m_type, changeset_id, prev_file)
+                            for m_type in mercurial_type_list
+                        ]
+
+                    # Generate Updated File Links
+                    if updated_file and updated_file[:2] == 'b/':
+                        updated_file_links = [
+                            generate_file_link(m_type, parent_hashes, updated_file)
+                            for m_type in mercurial_type_list
+                        ]
+
+                # Join links with " | " if multiple links are present
+                previous_file_link = " | ".join(previous_file_links) if previous_file_links else "not available"
+                updated_file_link = " | ".join(updated_file_links) if updated_file_links else "not available"
+
+                # Save to database:
+                cursor.execute('''
+                    UPDATE [Bugzilla_Mozilla_Changeset_Files] 
+                    SET Previous_File_Link = ?, Updated_File_Link = ? 
+                    WHERE Unique_Hash = ?
+                ''', (previous_file_link, updated_file_link, unique_hash))
+                record_count -= 1
+
+            # Commit after all updates
+            conn.commit()
+            print("\nUpdate complete.")
+
+        except Exception as e:
+            # Rollback in case of error
+            if conn:
+                conn.rollback()
+            print(f"An error occurred: {e}")
+        finally:
+            # Ensure resources are cleaned up
+            if conn:
+                conn.close()
+
+
 if __name__ == "__main__":
     obj = Automation()
-    obj.task_splitChangesetBugIdsIntoSeparateTable()
+    obj.compute_file_links()
