@@ -235,3 +235,29 @@ FROM (
         (Previous_File_Name LIKE '%.cpp' OR Updated_File_Name LIKE '%.cpp')
 ) AS File_Stats
 ORDER BY Percentage DESC;
+
+
+-- SQL Server Version
+SELECT 
+    @@VERSION AS [SQL Server Version],
+    SERVERPROPERTY('Edition') AS [Edition],
+    SERVERPROPERTY('ProductLevel') AS [Service Pack],
+    SERVERPROPERTY('ProductVersion') AS [Product Version];
+
+-- Compatibility Level
+USE MozillaCVEBug_2024; -- Replace with your database name
+SELECT 
+    name AS [Database Name],
+    compatibility_level AS [Compatibility Level]
+FROM sys.databases
+WHERE name = 'MozillaCVEBug_2024';
+
+-- Collation
+SELECT 
+    name AS [Database Name],
+    collation_name AS [Collation]
+FROM sys.databases
+WHERE name = 'MozillaCVEBug_2024';
+
+-- Database Size
+EXEC sp_spaceused;
