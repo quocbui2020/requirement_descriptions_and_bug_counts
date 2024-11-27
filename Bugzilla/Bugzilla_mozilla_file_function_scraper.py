@@ -8,7 +8,7 @@ import re
 import pyodbc
 import argparse
 from time import strftime, localtime
-from datetime import datetime
+from datetime import datetime, timedelta
 from collections import namedtuple
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 from Helpers import Extract_Function_From_File_Content_Helper as ExtractFunctionHelper
@@ -645,6 +645,244 @@ class Mozilla_File_Function_Scraper:
                 except:
                     pass
 
+    def migrate_json_file_to_db(self, start_folder, end_folder):
+        ##############################################################################
+        # https://chatgpt.com/c/672cb43d-8190-8004-88e5-f7b79afaada9
+        # Helper Functions:
+        # Helper Function to generate date folders in 'MM_DD_YYYY' format:
+        def generate_date_folders(start_folder, end_folder):
+            # Convert folder names to date objects
+            try:
+                start_date = datetime.strptime(start_folder, "%m_%d_%Y")
+                end_date = datetime.strptime(end_folder, "%m_%d_%Y")
+            except ValueError:
+                print("Error: Invalid date format. Please use 'MM_DD_YYYY'.")
+                return
+
+            date_folders = []
+            current_date = start_date
+            while current_date <= end_date:
+                date_folders.append(current_date.strftime("%m_%d_%Y"))
+                current_date += timedelta(days=1)
+            return date_folders
+
+        def save_to_database(data):
+            print(f"Saving to db...", end="", flush=True)
+
+            attempt_number = 1
+            max_connection_attempts = 10  # Number of max attempts to establish a connection.
+
+            while attempt_number <= 5:
+                connection_attempt = 1
+
+                while connection_attempt <= max_connection_attempts:
+                    try:
+                        conn = pyodbc.connect(conn_str)
+                        break
+                    except pyodbc.Error as conn_err:
+                        if conn_err.args[0] in ['08S01']:  # The connection is broken and recovery is not possible.
+                            connection_attempt += 1
+                            print(f"08S01.\nConnection attempt {connection_attempt} failed. Retrying in 5 seconds...", end="", flush=True)
+                            time.sleep(5)
+                        else:
+                            raise conn_err
+                else:
+                    raise Exception("Failed to establish a connection after multiple attempts.")
+
+                try:
+                    cursor = conn.cursor()
+                    changeset_file_unique_hash = ""
+                    j = 0
+                    #for entry in data:
+                    while j < len(data):
+                        parameters = data[j].get("parameters", [])
+
+                        # Handle the case when the last 'parameters has only 3 elements (Example: 2_106019.json):
+                        if len(parameters) == 3 and j == len(data) - 1:
+                            # We update records based on task group and row num since we may not have unique hash data available to us
+                            process_status = parameters[0]
+                            task_group = parameters[1]
+                            row_num = parameters[2]
+
+                            update_query = """
+                            UPDATE [dbo].[Bugzilla_Mozilla_Changeset_Files]
+                            SET [Process_Status] = ?
+                            WHERE [Task_Group] = ?
+                                AND [Row_Num] = ?;
+                            """
+                            try:
+                                cursor.execute(update_query, process_status, task_group, row_num)
+                                print(f"Updated Process_Status for [task group-row num]: [{task_group}-{row_num}]")
+                            except Exception as e:
+                                print(f"Error updating Process_Status: {e}")
+                                return False
+
+                            conn.commit()
+                            print("Data saved successfully.", flush=True)
+                            return True
+
+                        # Skip insufficient parameters (log the issue)
+                        if len(parameters) < 4:
+                            print(f"Skipping invalid entry: {parameters}")
+                            return False
+
+                        save_last_3 = 0
+                        if j == len(data) - 1:
+                            save_last_3 = 3
+
+                        # Process function entries in chunks of 5
+                        for i in range(0, len(parameters) - save_last_3, 5):
+                            try:
+                                if i == 0:
+                                    changeset_file_unique_hash = parameters[i]
+
+                                function_signature = parameters[i + 1]
+                                function_status = parameters[i + 4]
+
+                                # Insert into `Bugzilla_Mozilla_Functions`
+                                query = """
+                                IF NOT EXISTS (
+                                    SELECT 1 FROM [dbo].[Bugzilla_Mozilla_Functions]
+                                    WHERE [Changeset_File_Unique_Hash] = ? AND [Function_Signature] = ?
+                                )
+                                INSERT INTO [dbo].[Bugzilla_Mozilla_Functions] (
+                                    [Changeset_File_Unique_Hash],
+                                    [Function_Signature],
+                                    [Function_Status],
+                                    [Inserted_On]
+                                ) VALUES (?, ?, ?, GETUTCDATE());
+                                """
+                                binary_changeset_file_hash = bytes.fromhex(changeset_file_unique_hash)
+                                cursor.execute(query,
+                                            binary_changeset_file_hash,
+                                            function_signature,
+                                            binary_changeset_file_hash,
+                                            function_signature,
+                                            function_status)
+                            except IndexError:
+                                print(f"Skipping malformed parameters: {parameters}")
+                                return False
+                            except Exception as e:
+                                print(f"Error inserting function entry: {e}")
+                                return False
+
+                        # Update final `Process_Status` if parameters is the very last parameters:
+                        if len(parameters) >= 3 and j == len(data) - 1:
+                            process_status = parameters[-3]
+                            try:
+                                update_query = """
+                                UPDATE [dbo].[Bugzilla_Mozilla_Changeset_Files]
+                                SET [Process_Status] = ?
+                                WHERE [Unique_Hash] = CONVERT(VARBINARY(64), ?, 1);
+                                """
+                                cursor.execute(update_query, process_status, bytes.fromhex(changeset_file_unique_hash))
+                            except Exception as e:
+                                print(f"Error updating changeset file: {e}")
+                                return False
+
+                        j += 1
+
+                    conn.commit()
+                    print("Data saved successfully.", flush=True)
+                    return True
+
+                except Exception as e:
+                    print(f"Error saving to database: {e}", flush=True)
+                    conn.rollback()  # Rollback on failure
+                    return False
+
+                finally:
+                    conn.close()  # Ensure connection is closed
+
+
+        ##############################################################################
+
+        # Generate list of date folders to process
+        date_folders = generate_date_folders(start_folder, end_folder)
+
+        # Get the base script directory
+        script_dir = os.path.dirname(os.path.abspath(__file__))
+
+        # Process each folder in the date range
+        for date_folder_name in date_folders:
+            directory = os.path.join(script_dir, "..", "..", "..", "csv_files", date_folder_name)
+            
+            if not os.path.exists(directory):
+                print(f"Directory '{directory}' does not exist. Skipping.")
+                continue
+
+            # Process each JSON file in the folder
+            for filename in os.listdir(directory):
+                # filename='2_119736.json' # Quoc: removed this afterward
+                if filename.endswith(".json") and not filename.startswith("COMPLETED_"):
+                    file_path = os.path.join(directory, filename)
+                    
+                    print(f"[{strftime('%m/%d/%Y %H:%M:%S', localtime())}]({str(date_folder_name)} - {str(filename)}): ", end="", flush=True)
+                    
+                    # Read the JSON file
+                    with open(file_path, 'r') as file:
+                        try:
+                            print(f"Reading file...", end="", flush=True)
+                            data = json.load(file)
+                        except json.JSONDecodeError:
+                            print(f"Error decoding JSON in file: {file_path}")
+                            continue
+
+                    # Save data to the database
+                    if save_to_database(data):
+                        print(f"Renaming file...", end="", flush=True)
+
+                        # Rename the file to mark it as completed
+                        completed_file_path = os.path.join(directory, f"COMPLETED_{filename}")
+                        os.rename(file_path, completed_file_path)
+                        print(f"Successful")
+                    else:
+                        print(f"Somwhere failed, do not rename filename: {filename}")
+
+    
+    def process_remaining_status_json_file(self):
+        # This method should only be run after 'migrate_json_file_to_db'. The 'migrate_json_file_to_db' function didn't handle the cases when
+        # the 'parameters' have less than 4 elements. For example '2_106916.json' or 'COMPLETED_2_106916.json' AND '2_112154.json' or 'COMPLETED_2_112154.json'
+        # Good thing that those records still have the file status of 'json_file'
+        pass
+
+    def revert_file_names(self, directory_path, list_of_files):
+        """
+        Revert file names by removing the 'COMPLETED_' prefix for files in the directory that match the list of files.
+        
+        Args:
+            directory_path (str): Path to the directory where the files are located.
+            list_of_files (list): List of filenames (without the 'COMPLETED_' prefix) to revert.
+
+        Returns:
+            list: A list of tuples containing (old_name, new_name) for files that were renamed successfully.
+        """
+        global conn_str
+        renamed_files = []  # To store successfully renamed files for reporting
+        
+        for file_id in list_of_files:
+            completed_file_name = f"COMPLETED_{file_id}.json"
+            original_file_name = f"{file_id}.json"
+            
+            # Full paths to the old and new filenames
+            completed_file_path = os.path.join(directory_path, completed_file_name)
+            original_file_path = os.path.join(directory_path, original_file_name)
+            
+            try:
+                # Check if the file exists
+                if os.path.exists(completed_file_path):
+                    # Rename the file
+                    os.rename(completed_file_path, original_file_path)
+                    renamed_files.append((completed_file_name, original_file_name))
+                    print(f"Renamed: {completed_file_name} -> {original_file_name}")
+                else:
+                    print(f"File not found: {completed_file_name}")
+            except Exception as e:
+                print(f"Error renaming {completed_file_name}: {e}")
+        
+        return renamed_files
+
+
     def run_scraper(self, task_group, start_row, end_row):
         records_to_be_processed = self.get_records_to_process(task_group, start_row, end_row)
         total_records = len(records_to_be_processed)
@@ -685,21 +923,68 @@ class Mozilla_File_Function_Scraper:
 #########################################################################
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="")
-    parser.add_argument('arg_1', type=int, help='Argument 1')
-    parser.add_argument('arg_2', type=int, help='Argument 2')
-    parser.add_argument('arg_3', type=int, help='Argument 3')
-    parser_args = parser.parse_args()
-    task_group = parser_args.arg_1
-    start_row = parser_args.arg_2
-    end_row = parser_args.arg_3
+    object = Mozilla_File_Function_Scraper()
+
+    # parser = argparse.ArgumentParser(description="")
+    # parser.add_argument('arg_1', type=int, help='Argument 1')
+    # parser.add_argument('arg_2', type=int, help='Argument 2')
+    # parser.add_argument('arg_3', type=int, help='Argument 3')
+    # parser_args = parser.parse_args()
+    # task_group = parser_args.arg_1
+    # start_row = parser_args.arg_2
+    # end_row = parser_args.arg_3
 
     # Testing specific input arguments:
     # task_group = 0   # Task group
     # start_row = 2   # Start row
     # end_row = start_row   # End row
 
-    scraper = Mozilla_File_Function_Scraper()
-    scraper.run_scraper(task_group, start_row, end_row)
+    # object.run_scraper(task_group, start_row, end_row)
 
-print(f"[{strftime('%m/%d/%Y %H:%M:%S', localtime())}] PROGRAM FINISHED. EXIT!")
+    object.migrate_json_file_to_db('11_07_2024', '11_08_2024')
+
+
+    # object.revert_file_names(
+    #     r"C:\Users\quocb\Quoc Bui\Study\phd_in_cs\Research\first_paper\Code\r_to_b_mapping\csv_files\11_07_2024",
+    # [
+    #     '2_114131', '2_114132', '2_114133', '2_114134',
+    #     '2_114135', '2_114136', '2_114639', '2_114863',
+    #     '2_114864', '2_114865', '2_114866', '2_115547',
+    #     '2_115711', '2_116537', '2_116538', '2_116766',
+    #     '2_117151', '2_117152', '2_117153', '2_117154',
+    #     '2_117155', '2_117156', '2_117157', '2_117296',
+    #     '2_117297', '2_117298', '2_117302', '2_117303',
+    #     '2_117485', '2_117862', '2_117924', '2_117925',
+    #     '2_119205', '2_119239', '2_119439', '2_119735',
+    #     '2_119736', '2_119783', '2_119784', '2_120091',
+    #     '2_120092', '2_120094', '2_120206', '2_120207',
+    #     '2_120208', '2_120843', '2_120992', '2_121733',
+    #     '2_121734', '2_121887', '2_121888', '2_121889',
+    #     '2_122111', '2_122513', '2_122514', '2_123403',
+    #     '2_124121', '2_124122', '2_124123', '2_124135',
+    #     '2_124136', '2_124137', '2_124138', '2_124139',
+    #     '2_124140', '2_124412', '2_124413', '2_124468',
+    #     '2_124469', '2_124574', '2_124575', '2_124576',
+    #     '2_124577', '2_125645', '2_125646', '2_126189',
+    #     '2_126237', '2_126238', '2_126239', '2_126240',
+    #     '2_126241', '2_126275', '2_126616', '2_126617',
+    #     '2_126640', '2_126743', '2_126752', '2_126753',
+    #     '2_126870', '2_126871', '2_127186', '2_128140',
+    #     '2_128154', '2_128307', '2_128308', '2_128378',
+    #     '2_128379', '2_128400', '2_128847', '2_129020',
+    #     '2_129437', '2_129465', '2_129466', '2_129584',
+    #     '2_130610', '2_131114', '2_131134', '2_131135',
+    #     '2_131136', '2_131137', '2_131138', '2_131639',
+    #     '2_131640', '2_131880', '2_131881', '2_131897',
+    #     '2_132857', '2_132858', '2_132859', '2_132912',
+    #     '2_133336', '2_133420', '2_133990', '2_133992',
+    #     '2_133993', '2_133994', '2_134198', '2_134222',
+    #     '2_134279', '2_134280', '2_135091', '2_135259',
+    #     '2_135512', '2_135513', '2_135514', '2_135824',
+    #     '2_135909', '2_136660', '2_136661', '2_136904',
+    #     '2_136905', '2_137097', '2_137177', '2_137543',
+    #     '2_137544', '2_137643', '2_137773', '2_137784',
+    #     '2_137785', '2_137786', '2_137787'
+    # ])
+    
+    print(f"[{strftime('%m/%d/%Y %H:%M:%S', localtime())}] PROGRAM FINISHED. EXIT!")
