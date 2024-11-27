@@ -496,3 +496,7 @@ select * from Bugzilla_Mozilla_Changesets where hash_id like '6cb490697a27%'
 
 select * from Bugzilla_Mozilla_Changeset_Files where Changeset_Hash_ID='18bb5c07a3b7402ff1263f8ecd47f07fd86052d0'
 
+/*
+-- Migrate data from json file --> Database:
+	(1) 11_07_2024 - 7_148712.json -- Super lengthy file.
+*/
