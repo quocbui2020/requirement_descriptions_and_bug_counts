@@ -14,7 +14,7 @@ FireFoxDB:
 	- Look at the 'Mercurial_Type'
 */
 
--- Build [Bug_Details] table:
+-- Populate data for [Bug_Details]:
 insert into FireFixDB_v2.dbo.Bug_Details
            ([ID]
            ,[Title]
@@ -44,7 +44,7 @@ where (b.alias not like 'CVE%' or b.alias is null)
 	and c.Mercurial_Type like '%mozilla-central%'
     and b.status is in('VERIFIED','RESOLVED');
 
--- Build [Changeset_Bug_Mapping] table:
+-- Populate data for [Changeset_Bug_Mapping]:
 INSERT INTO [FireFixDB_v2].[dbo].[Changeset_Bug_Mapping]
     ([Changeset_Hash_ID]
     ,[Bug_ID])
@@ -55,7 +55,7 @@ from ResearchDatasets.dbo.Bugzilla_Mozilla_Changeset_BugIds m
 inner join [FireFixDB_v2].[dbo].Bug_Details b on b.ID = m.Bug_ID
 where m.[Type] = 'InTitle';
 
--- Build [Changeset_Details] table:
+-- Populate data for [Changeset_Details]:
 INSERT INTO [FireFixDB_v2].[dbo].[Changeset_Details]
     ([Hash_ID]
     ,[Changeset_Summary]
@@ -79,7 +79,7 @@ where c.Is_Backed_Out_Changeset = 0
 	and c.Backout_Hashes is null
 	and c.Parent_Hashes not like '%|%';
 
--- Build [Changeset_Files] table:
+-- Populate data for [Changeset_Files]:
 INSERT INTO [FireFixDB_v2].[dbo].[Changeset_Files]
     ([Changeset_Hash_ID]
     ,[Previous_File_Name]
@@ -121,4 +121,13 @@ OR (
 	OR (f.Previous_File_Name LIKE '%.py' AND f.Updated_File_Name LIKE '%.py')
 	OR (f.Previous_File_Name LIKE '%.c' AND f.Updated_File_Name LIKE '%.c')
 	OR (f.Previous_File_Name LIKE '%.cpp' AND f.Updated_File_Name LIKE '%.cpp')
-)
+);
+
+-- Populate data for [Changeset_Git_Mapping]:
+INSERT INTO [FireFixDB_v2].[dbo].[Changeset_Git_Mapping]
+	([Changeset_Hash_ID]
+	,[Git_Commit_ID])
+select distinct
+	c.Hash_ID,
+	NULL
+from [FireFixDB_v2].dbo.Changeset_Details c;
