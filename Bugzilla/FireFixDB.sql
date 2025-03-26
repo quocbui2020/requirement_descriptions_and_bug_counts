@@ -308,3 +308,22 @@ WHERE name = 'FixFoxDB';
 
 -- Database Size
 EXEC sp_spaceused;
+
+
+-------------------------------------------------------------------------------------------
+/*
+cases: prev file: (.c) and updated file (.cpp) <-- Not align but both valid files.
+*/
+select Unique_Hash
+from Changeset_Files
+where
+(
+	Previous_File_Name <> '/dev/null' and Updated_File_Name <> '/dev/null'
+)
+and
+(
+	not (Previous_File_Name like '%.c' and Updated_File_Name like '%.c')
+	and not (Previous_File_Name like '%.cpp' and Updated_File_Name like '%.cpp')
+	and not (Previous_File_Name like '%.js' and Updated_File_Name like '%.js')
+	and not (Previous_File_Name like '%.py' and Updated_File_Name like '%.py')
+)
