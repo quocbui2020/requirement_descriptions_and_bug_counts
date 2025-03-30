@@ -41,8 +41,14 @@ from ResearchDatasets.dbo.Bugzilla b
 inner join ResearchDatasets.dbo.Bugzilla_Mozilla_Changeset_BugIds cb on cb.Bug_ID = b.id
 inner join ResearchDatasets.dbo.Bugzilla_Mozilla_Changesets c on cb.Changeset_Hash_ID = c.Hash_Id
 where (b.alias not like 'CVE%' or b.alias is null)
-	and c.Mercurial_Type like '%mozilla-central%'
-    and b.status is in('VERIFIED','RESOLVED');
+	and (
+		Mercurial_Type like 'mozilla-central'
+		or Mercurial_Type like '% mozilla-central' -- Example: '... | mozilla-central'
+		or Mercurial_Type like 'mozilla-central %' -- Example: 'mozilla-central | ...'
+		or Mercurial_Type like '% mozilla-central %' -- Example: '... | mozilla-central | ...'
+			-- Exclude cases: '...mozilla-central-cvs' or 'something/mozilla-central'
+		)
+	and b.status in('VERIFIED','RESOLVED');
 
 -- Populate data for [Changeset_Bug_Mapping]:
 INSERT INTO [FireFixDB_v2].[dbo].[Changeset_Bug_Mapping]
@@ -52,8 +58,16 @@ select distinct
 	m.Changeset_Hash_ID,
 	m.Bug_ID
 from ResearchDatasets.dbo.Bugzilla_Mozilla_Changeset_BugIds m
-inner join [FireFixDB_v2].[dbo].Bug_Details b on b.ID = m.Bug_ID
-where m.[Type] = 'InTitle';
+inner join FireFixDB_v2.dbo.Bug_Details b on b.ID = m.Bug_ID
+inner join ResearchDatasets.dbo.Bugzilla_Mozilla_Changesets c on c.Hash_Id = m.Changeset_Hash_ID
+where m.[Type] = 'InTitle'
+	-- One 'b' can have multiple 'm' (with Type='InTitle') records, and each of those records can have different mercurial type (could be other tthan 'mozilla-central'). Therefore, we need to filter it again here:
+	and (
+			c.Mercurial_Type like 'mozilla-central'
+			or c.Mercurial_Type like '% mozilla-central'
+			or c.Mercurial_Type like 'mozilla-central %'
+			or c.Mercurial_Type like '% mozilla-central %'
+		);
 
 -- Populate data for [Changeset_Details]:
 INSERT INTO [FireFixDB_v2].[dbo].[Changeset_Details]
