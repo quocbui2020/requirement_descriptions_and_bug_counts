@@ -145,3 +145,94 @@ select distinct
 	c.Hash_ID,
 	NULL
 from [FireFixDB_v2].dbo.Changeset_Details c;
+
+
+/*
+Populate data for [Defect_Counts]
+Note: This query combine the database from FireFixDB_v2 and FixFox_v2 together.
+*/
+with EnhacementTaskTickets AS (
+	select distinct b.ID
+		,b.[Type]
+		,b.[Resolved_Comment_Datetime]
+		,gd.Modified_File
+		,gd.Modified_Function
+	from FireFixDB_v2.dbo.Bug_Details b
+	inner join FireFixDB_v2.dbo.Changeset_Bug_Mapping bm on bm.Bug_ID = b.ID
+	inner join FireFixDB_v2.dbo.Changeset_Git_Mapping gm on gm.Changeset_Hash_ID = bm.Changeset_Hash_ID
+	inner join FireFixDB_v2.dbo.Git_Commit_Details gd on gd.Git_Commit_ID = gm.Git_Commit_ID
+		AND (gd.Modified_File LIKE '%.js'
+			OR gd.Modified_File LIKE '%.py'
+			OR gd.Modified_File LIKE '%.c'
+			OR gd.Modified_File LIKE '%.cpp'
+		)
+	where b.[Type] in('enhancement','task')
+		and b.Resolution='FIXED'
+
+	UNION
+
+	select distinct b.ID
+		,b.[Type]
+		,b.[Resolved_Comment_Datetime]
+		,gd.Modified_File
+		,gd.Modified_Function
+	from FixFox_v2.dbo.Bug_Details b
+	inner join FixFox_v2.dbo.Changeset_Bug_Mapping bm on bm.Bug_ID = b.ID
+	inner join FixFox_v2.dbo.Changeset_Git_Mapping gm on gm.Changeset_Hash_ID = bm.Changeset_Hash_ID
+	inner join FixFox_v2.dbo.Git_Commit_Details gd on gd.Git_Commit_ID = gm.Git_Commit_ID
+		AND (gd.Modified_File LIKE '%.js'
+			OR gd.Modified_File LIKE '%.py'
+			OR gd.Modified_File LIKE '%.c'
+			OR gd.Modified_File LIKE '%.cpp'
+		)
+	where b.[Type] in('enhancement','task')
+		and b.Resolution='FIXED'
+),
+DefectTickets as (
+	select distinct b.ID
+		,b.[Type]
+		,b.[Resolved_Comment_Datetime]
+		,gd.Modified_File
+		,gd.Modified_Function
+	from FireFixDB_v2.dbo.Bug_Details b
+	inner join FireFixDB_v2.dbo.Changeset_Bug_Mapping bm on bm.Bug_ID = b.ID
+	inner join FireFixDB_v2.dbo.Changeset_Git_Mapping gm on gm.Changeset_Hash_ID = bm.Changeset_Hash_ID
+	inner join FireFixDB_v2.dbo.Git_Commit_Details gd on gd.Git_Commit_ID = gm.Git_Commit_ID
+		AND (gd.Modified_File LIKE '%.js'
+			OR gd.Modified_File LIKE '%.py'
+			OR gd.Modified_File LIKE '%.c'
+			OR gd.Modified_File LIKE '%.cpp'
+		)
+	where b.[Type] = 'defect'
+		and b.Resolution='FIXED'
+
+	UNION
+
+	select distinct b.ID
+		,b.[Type]
+		,b.[Resolved_Comment_Datetime]
+		,gd.Modified_File
+		,gd.Modified_Function
+	from FixFox_v2.dbo.Bug_Details b
+	inner join FixFox_v2.dbo.Changeset_Bug_Mapping bm on bm.Bug_ID = b.ID
+	inner join FixFox_v2.dbo.Changeset_Git_Mapping gm on gm.Changeset_Hash_ID = bm.Changeset_Hash_ID
+	inner join FixFox_v2.dbo.Git_Commit_Details gd on gd.Git_Commit_ID = gm.Git_Commit_ID
+		AND (gd.Modified_File LIKE '%.js'
+			OR gd.Modified_File LIKE '%.py'
+			OR gd.Modified_File LIKE '%.c'
+			OR gd.Modified_File LIKE '%.cpp'
+		)
+	where b.[Type] = 'defect'
+		and b.Resolution='FIXED'
+)
+INSERT INTO [FireFixDB_v2].[dbo].[Defect_Counts] (Enhancement_Ticket_ID, Defect_Count, [Version])
+SELECT 
+    e.ID,
+    COUNT(Distinct d.ID) AS Defect_Count,
+	'defect datetime fall between enhancement datetime + 48 months'
+FROM EnhacementTaskTickets e
+LEFT JOIN DefectTickets d ON d.Modified_File = e.Modified_File
+    AND e.Modified_Function = d.Modified_Function
+    AND CAST(e.Resolved_Comment_Datetime AS DATETIME) < CAST(d.Resolved_Comment_Datetime AS DATETIME)
+	AND CAST(d.Resolved_Comment_Datetime AS DATETIME) <= DATEADD(MONTH, 48, CAST(e.Resolved_Comment_Datetime AS DATETIME)) -- comment this line for version='original'
+GROUP BY e.ID;
