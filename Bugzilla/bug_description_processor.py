@@ -1,4 +1,4 @@
-# bug_description_preprocessor.py: Preprocess and clean mozilla bug descriptions
+# bug_description_preprocessor.py: Preprocess, clean, and compute readability scores in mozilla bug descriptions
 # [Clean_Description_1]: Descriptions without HTML tags and links
 # [Clean_Description_2]: Descriptions without HTML tags, links, and non-English words and punctuation marks except for commas and periods
 

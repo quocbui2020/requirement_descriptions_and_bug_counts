@@ -149,6 +149,7 @@ class Automation:
                 if mercurial_type:
                     mercurial_type_list = mercurial_type.split(" | ")
 
+                    # TODO: Quoc: Need to revisit this logics. Looks like we should've use the 'parent_hashes' for this.
                     # Generate Previous File Links
                     if prev_file and prev_file[:2] == 'a/':
                         previous_file_links = [
@@ -156,6 +157,7 @@ class Automation:
                             for m_type in mercurial_type_list
                         ]
 
+                    # TODO: Quoc: Need to revisit this logics. Looks like we should've use the 'changeset_id' for this.
                     # Generate Updated File Links
                     if updated_file and updated_file[:2] == 'b/':
                         updated_file_links = [
@@ -169,7 +171,7 @@ class Automation:
 
                 # Save to database:
                 cursor.execute('''
-                    UPDATE [Bugzilla_Mozilla_Changeset_Files] 
+                    UPDATE [Bugzilla_Mozilla_Changeset_Files]
                     SET Previous_File_Link = ?, Updated_File_Link = ? 
                     WHERE Unique_Hash = ?
                 ''', (previous_file_link, updated_file_link, unique_hash))

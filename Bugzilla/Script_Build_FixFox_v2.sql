@@ -12,6 +12,8 @@ FixFox:
     - Collect commits associates with CVE
 	- Only consider 'Mozilla Central'.
 	    - Look at the 'Mercurial_Type'
+		
+When submitting the paper in 2024 (First attempt), we do not apply filter (Only consider 'Mozilla Central')
 */
 
 -- Populate data for [Bug_Details]:
@@ -173,3 +175,36 @@ select distinct
 	c.Hash_ID,
 	NULL
 from [FixFox_v2].dbo.Changeset_Details c;
+
+
+-- Populate data for [Changeset_Modified_Functions]:
+INSERT INTO FixFox_v3.dbo.Changeset_Modified_Functions (Changeset_File_Unique_Hash, Function_Name)
+SELECT DISTINCT
+    cf.Unique_Hash AS Changeset_File_Unique_Hash,
+    gcd.Modified_Function AS Function_Name
+FROM FixFox_v3.dbo.Changeset_Files cf
+INNER JOIN FixFox_v3.dbo.Changeset_Git_Mapping cgm 
+    ON cgm.Changeset_Hash_ID = cf.Changeset_Hash_ID
+INNER JOIN FixFox_v3.dbo.git_commit_details gcd 
+    ON gcd.Git_Commit_ID = cgm.Git_Commit_ID
+WHERE REPLACE(
+        SUBSTRING(
+            CASE 
+                WHEN cf.Updated_File_Name = '/dev/null' THEN cf.Previous_File_Name
+                ELSE cf.Updated_File_Name
+            END,
+            CASE 
+                WHEN (cf.Updated_File_Name LIKE 'a/%' OR cf.Updated_File_Name LIKE 'b/%' 
+                      OR cf.Previous_File_Name LIKE 'a/%' OR cf.Previous_File_Name LIKE 'b/%') 
+                THEN 3 ELSE 1 
+            END,
+            LEN(
+                CASE 
+                    WHEN cf.Updated_File_Name = '/dev/null' THEN cf.Previous_File_Name
+                    ELSE cf.Updated_File_Name
+                END
+            )
+        ),
+        '/', '\'
+    ) = gcd.Modified_File;
+

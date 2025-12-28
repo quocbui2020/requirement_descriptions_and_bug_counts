@@ -9,20 +9,23 @@ import requests
 from datetime import datetime
 from prettytable import PrettyTable
 from bs4 import BeautifulSoup
-import logging
+# import logging    # Uncomment this to enable logging to a file
 from logging import info
 from time import strftime, localtime
 import pyodbc
 import traceback
 import re
 import time
+import argparse
+import json
 
-logging.basicConfig(level=logging.INFO, filename=f"C:\\Users\\quocb\\Quoc Bui\\Study\\phd_in_cs\\Research\\first_paper\\Code\\r_to_b_mapping\\bugzilla\\logs\\logger_{strftime('%Y%m%d_%H-%M-%S', localtime())}.log", filemode='w', format='%(levelname)s-%(message)s')
+# Uncomment this to enable logging to a file
+# logging.basicConfig(level=logging.INFO, filename=f"C:\\Users\\quocb\\Quoc Bui\\Study\\phd_in_cs\\Research\\first_paper\\Code\\r_to_b_mapping\\bugzilla\\logs\\logger_{strftime('%Y%m%d_%H-%M-%S', localtime())}.log", filemode='w', format='%(levelname)s-%(message)s')
 
 # Connect to the database
 conn = pyodbc.connect('DRIVER={ODBC Driver 18 for SQL Server};'
                         'SERVER=QUOCBUI-PERSONA\\MSSQLSERVER01;'
-                        'DATABASE=ResearchDatasets;'
+                        'DATABASE=master;'
                         'LongAsMax=yes;'
                         'TrustServerCertificate=yes;'
                         'Trusted_Connection=yes;')
@@ -209,7 +212,7 @@ def create_api_call_log(request_url, is_success):
 
 def get_bugzilla_count(start_id, end_id):
     cursor = conn.cursor()
-    cursor.execute(f"SELECT COUNT(id) FROM bugzilla where id >= 475363 and id <= 950725")
+    cursor.execute(f"SELECT COUNT(id) FROM bugzilla where id >= ? and id <= ?", (start_id, end_id))
     return cursor.fetchone()[0]
 
 def get_resolved_comment_datetime(bug):
@@ -290,24 +293,117 @@ def ExtractBugChangesetLink(bug, resolved_comment_time_string):
     else:
         return None
 
+# This function fetches all unprocessed bugs from the database:
+def fetch_bugs_for_severity_priority_process(database_name):
+    global conn
+
+    try:
+        with conn.cursor() as cursor:
+            cursor.execute(f"""
+            SELECT
+                b.[ID]
+                ,rdb.[Severity]
+                ,rdb.[Priority]
+            FROM [{database_name}].[dbo].[Bug_Details] b
+            INNER JOIN ResearchDatasets.dbo.Bugzilla rdb ON rdb.id = b.ID
+	            AND (rdb.[Severity] IS NULL OR rdb.[Priority] IS NULL)
+            ORDER BY b.[ID] ASC;
+            """)
+            rows = cursor.fetchall()
+            return [{"ID": row.ID, "Severity": row.Severity, "Priority": row.Priority} for row in rows]
+        
+    except Exception as e:
+        print(f"An error occurred: {e}")
+        return None
+
+def severity_priority_scraper(bug_ids_string, limit=10):
+    base_url = "https://bugzilla.mozilla.org/rest/bug"
+    query_strings = f"limit={limit}&order=bug_id ASC&bug_id={bug_ids_string}&include_fields=id,priority,severity"
+    try:
+        # Making the GET request
+        response = requests.get(f"{base_url}?{query_strings}")
+        if response.status_code != 200:
+            print(f"Failed to fetch data for Bug IDs: {bug_id_list}")
+            return None
+        
+        json_response = response.json()
+        return json_response['bugs']
+
+    except Exception as e:
+        print(f"An error occurred: {e}")
+        return None
+    
+# Save severity and priority to database:
+def save_severity_priority_to_database(bug_id, severity, priority):
+    global conn
+
+    with conn.cursor() as cursor:
+        cursor.execute(f"""
+            UPDATE [ResearchDatasets].[dbo].[Bugzilla]
+            SET [Severity] = ?, [Priority] = ?
+            WHERE [ID] = ?;
+        """, (severity, priority, bug_id))
+        conn.commit()
+
 ###########################################################################################
 ###########################################################################################
+# errorCount = 0
+# crawler_offset = 464887
+# global_offset = get_bugzilla_count() + crawler_offset
+# global_limit = 1200
 
-errorCount = 0
-crawler_offset = 464887
-global_offset = get_bugzilla_count() + crawler_offset
-global_limit = 1200
+# for x in range(0,999):
+#     print(f"\n{str(x+1)}.Current offset value: {global_offset} | Current time: {strftime('%m/%d/%Y %H:%M:%S', localtime())}")
+#     print(f"{str(x+1)}.Processing offset ranges:[" + str(global_offset) + "-" + str(global_offset + global_limit) + "]")
 
-for x in range(0,999):
-    print(f"\n{str(x+1)}.Current offset value: {global_offset} | Current time: {strftime('%m/%d/%Y %H:%M:%S', localtime())}")
-    print(f"{str(x+1)}.Processing offset ranges:[" + str(global_offset) + "-" + str(global_offset + global_limit) + "]")
+#     result = BugzillaCrawler()
+#     if result == "error":
+#         errorCount += 1
+#     else:
+#         errorCount = 0
+#     global_offset = get_bugzilla_count() + crawler_offset
 
-    result = BugzillaCrawler()
-    if result == "error":
-        errorCount += 1
-    else:
-        errorCount = 0
-    global_offset = get_bugzilla_count() + crawler_offset
+# print(f"\nCompleted: Bugzilla Crawler Executed.\n")
+# conn.close()
 
-print(f"\nCompleted: Bugzilla Crawler Executed.\n")
-conn.close()
+## This is the main entry point to scarpping for severity and priority of bugs
+# if __name__ == "__main__":
+#     parser = argparse.ArgumentParser(description="")
+#     parser.add_argument('arg_1', type=str, help='Database Name')
+#     parser.add_argument('arg_2', type=str, help='Limit')
+#     args = parser.parse_args()
+#     arg_1 = args.arg_1
+#     arg_2 = args.arg_2
+
+#     # For debugging purposes:
+#     # arg_1 = "FireFixDB_v2"
+#     # arg_2 = 400
+
+#     bugs = fetch_bugs_for_severity_priority_process(arg_1)
+#     next_bug_index = 0 # Index of the next bug to be processed
+#     total_unprocessed_bugs = len(bugs)
+#     while next_bug_index < len(bugs):
+#         print(f"[{strftime('%m/%d/%Y %H:%M:%S', localtime())}]({total_unprocessed_bugs}) Processing Next Batch...", end="", flush=True)
+
+#         # Get next bug ID batch:
+#         bug_id_list = []
+#         bug_list_string = ""
+#         for i in range(next_bug_index, min(next_bug_index + int(arg_2), len(bugs))):
+#             if i < len(bugs):
+#                 bug_id_list.append(str(bugs[i]["ID"]))
+#         if len(bug_id_list) == 0:
+#             break
+#         bug_list_string = ",".join(bug_id_list)
+
+#         # Make call to scraper:
+#         json_response_scraper_results = severity_priority_scraper(bug_list_string, limit=arg_2)
+            
+#         # Save results to database:
+#         for bug in json_response_scraper_results:
+#             save_severity_priority_to_database(bug.get('id'), bug.get('severity'), bug.get('priority'))
+#             next_bug_index += 1
+#             total_unprocessed_bugs -= 1
+
+#         print(" Done.")
+    
+print(f"[{strftime('%m/%d/%Y %H:%M:%S', localtime())}] PROGRAM FINISHED. EXIT!")

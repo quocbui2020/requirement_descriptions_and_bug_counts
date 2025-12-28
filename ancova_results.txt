@@ -1,0 +1,50 @@
+=== ANCOVA Model Summary ===
+                            OLS Regression Results                            
+==============================================================================
+Dep. Variable:           Defect_Count   R-squared:                       0.039
+Model:                            OLS   Adj. R-squared:                  0.039
+Method:                 Least Squares   F-statistic:                     61.20
+Date:                Thu, 18 Sep 2025   Prob (F-statistic):          2.29e-146
+Time:                        09:51:57   Log-Likelihood:                -86944.
+No. Observations:               18000   AIC:                         1.739e+05
+Df Residuals:                   17987   BIC:                         1.740e+05
+Df Model:                          12                                         
+Covariance Type:            nonrobust                                         
+=======================================================================================================
+                                          coef    std err          t      P>|t|      [0.025      0.975]
+-------------------------------------------------------------------------------------------------------
+Intercept                             192.4799      9.848     19.546      0.000     173.178     211.782
+C(Severity_Mapped_For_ANCOVA)[T.S3]    -6.1500      5.454     -1.128      0.260     -16.841       4.541
+C(Severity_Mapped_For_ANCOVA)[T.S2]   -11.0096      7.437     -1.480      0.139     -25.588       3.568
+C(Severity_Mapped_For_ANCOVA)[T.S1]   -10.3085     30.805     -0.335      0.738     -70.690      50.073
+C(Priority_For_ANCOVA)[T.P2]            2.2704      0.649      3.501      0.000       0.999       3.542
+C(Priority_For_ANCOVA)[T.P3]            1.4726      0.588      2.505      0.012       0.321       2.625
+C(Priority_For_ANCOVA)[T.P4]           -6.9987      0.794     -8.810      0.000      -8.556      -5.442
+C(Priority_For_ANCOVA)[T.P5]           -1.3382      1.303     -1.027      0.304      -3.892       1.215
+Resolved_Timestamp                  -1.119e-07   5.12e-09    -21.873      0.000   -1.22e-07   -1.02e-07
+Character_Removal_Percentage           -0.0296      0.017     -1.714      0.087      -0.063       0.004
+Flesch_Kincaid_Reading_Ease            -0.0512      0.019     -2.678      0.007      -0.089      -0.014
+Coleman_Liau_Index                      0.0249      0.107      0.232      0.817      -0.186       0.236
+Number_Of_Words                         0.0079      0.004      2.086      0.037       0.000       0.015
+==============================================================================
+Omnibus:                    37541.648   Durbin-Watson:                   1.855
+Prob(Omnibus):                  0.000   Jarque-Bera (JB):        216916634.150
+Skew:                          17.765   Prob(JB):                         0.00
+Kurtosis:                     539.619   Cond. No.                     2.11e+11
+==============================================================================
+
+Notes:
+[1] Standard Errors assume that the covariance matrix of the errors is correctly specified.
+[2] The condition number is large, 2.11e+11. This might indicate that there are
+strong multicollinearity or other numerical problems.
+
+=== ANCOVA Table (Type II) ===
+                                     sum_sq       df           F         PR(>F)
+C(Severity_Mapped_For_ANCOVA)  2.034546e+03      3.0    0.737989   5.292170e-01
+C(Priority_For_ANCOVA)         1.431246e+05      4.0   38.936625   1.655355e-32
+Resolved_Timestamp             4.396585e+05      1.0  478.431169  1.082585e-104
+Character_Removal_Percentage   2.700231e+03      1.0    2.938359   8.651580e-02
+Flesch_Kincaid_Reading_Ease    6.589535e+03      1.0    7.170653   7.417308e-03
+Coleman_Liau_Index             4.936298e+01      1.0    0.053716   8.167212e-01
+Number_Of_Words                3.999289e+03      1.0    4.351978   3.698004e-02
+Residual                       1.652931e+07  17987.0         NaN            NaN
