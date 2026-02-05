@@ -143,6 +143,7 @@ SELECT DISTINCT
 FROM [FixFox_v2].[dbo].[Changeset_Details] c
 INNER JOIN ResearchDatasets.dbo.Bugzilla_Mozilla_Changeset_Files f ON f.Changeset_Hash_ID = c.Hash_ID
 WHERE (
+	-- Apply the filter to ensure we consider only js, py, c, and cpp files.
 	f.Previous_File_Name = '/dev/null'
 	AND (
 		f.Updated_File_Name LIKE '%.js'

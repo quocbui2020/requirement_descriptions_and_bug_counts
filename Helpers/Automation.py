@@ -14,7 +14,7 @@ from collections import namedtuple
 
 # Connection string
 conn_str = 'DRIVER={ODBC Driver 18 for SQL Server};' \
-           'SERVER=QUOCBUI-PERSONA\\MSSQLSERVER01;' \
+           'SERVER=localhost\\SQLEXPRESS;' \
            'DATABASE=ResearchDatasets;' \
            'Connection Timeout=300;' \
            'Login Timeout=300;' \
@@ -99,7 +99,7 @@ class Automation:
             cursor.close()
             conn.close()
 
-
+    # This function computed the previous file links and updated file links fields
     def compute_file_links(self):
         conn = None
         try:
@@ -153,7 +153,7 @@ class Automation:
                     # Generate Previous File Links
                     if prev_file and prev_file[:2] == 'a/':
                         previous_file_links = [
-                            generate_file_link(m_type, changeset_id, prev_file)
+                            generate_file_link(m_type, parent_hashes, prev_file)
                             for m_type in mercurial_type_list
                         ]
 
@@ -161,7 +161,7 @@ class Automation:
                     # Generate Updated File Links
                     if updated_file and updated_file[:2] == 'b/':
                         updated_file_links = [
-                            generate_file_link(m_type, parent_hashes, updated_file)
+                            generate_file_link(m_type, changeset_id, updated_file)
                             for m_type in mercurial_type_list
                         ]
 
