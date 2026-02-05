@@ -1,0 +1,309 @@
+{
+	"info": {
+		"_postman_id": "bc241a72-bdeb-449a-b701-8941db1c69f7",
+		"name": "Bugzilla (REST)",
+		"schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json",
+		"_exporter_id": "17974996"
+	},
+	"item": [
+		{
+			"name": "GET bug (format=multiple)",
+			"request": {
+				"method": "POST",
+				"header": [],
+				"url": {
+					"raw": "https://bugzilla.mozilla.org/show_bug.cgi?id=0&format=multiple&id=1502342",
+					"protocol": "https",
+					"host": [
+						"bugzilla",
+						"mozilla",
+						"org"
+					],
+					"path": [
+						"show_bug.cgi"
+					],
+					"query": [
+						{
+							"key": "id",
+							"value": "0"
+						},
+						{
+							"key": "format",
+							"value": "multiple"
+						},
+						{
+							"key": "note:",
+							"value": "use '1509308#c11' to search for the datetime value to find important comment.",
+							"disabled": true
+						},
+						{
+							"key": "id",
+							"value": "1502342"
+						}
+					]
+				},
+				"description": "Search for critical comment:\n\n1) Search for **field_container_cf_last_resolved** and obtain the datetime\n\n2) Convert it to PDT date time (UTC -8).\n\n3) Search for that datetime (military time)\n\n4) search for the content in the next html tag\n\nSearch for Bug Description:\n\n1. Search for **#c0\">Description** or **bz_first_comment**\n2. **Search for the content in the next htmltag.**\n3. **Issue: including other unnecessary html tags and css format.**\n4. **Cleaning the html tag, keep comments only.**"
+			},
+			"response": []
+		},
+		{
+			"name": "POST Bugzilla Linkity Text",
+			"request": {
+				"method": "POST",
+				"header": [],
+				"body": {
+					"mode": "formdata",
+					"formdata": [
+						{
+							"key": "text",
+							"value": "Comment on attachment 9043408 [details] [diff] [review]\nFix for SeaMonkey link error",
+							"type": "text"
+						},
+						{
+							"key": "id",
+							"value": "linked.html",
+							"type": "text"
+						}
+					]
+				},
+				"url": {
+					"raw": "https://bugzilla.mozilla.org/page.cgi",
+					"protocol": "https",
+					"host": [
+						"bugzilla",
+						"mozilla",
+						"org"
+					],
+					"path": [
+						"page.cgi"
+					]
+				}
+			},
+			"response": []
+		},
+		{
+			"name": "https://bugzilla.mozilla.org/show_bug.cgi?id=1000145",
+			"request": {
+				"method": "GET",
+				"header": [],
+				"url": {
+					"raw": "https://bugzilla.mozilla.org/show_bug.cgi?id=1000145",
+					"protocol": "https",
+					"host": [
+						"bugzilla",
+						"mozilla",
+						"org"
+					],
+					"path": [
+						"show_bug.cgi"
+					],
+					"query": [
+						{
+							"key": "id",
+							"value": "1000145"
+						}
+					]
+				}
+			},
+			"response": []
+		},
+		{
+			"name": "GET bug by bug_id",
+			"request": {
+				"method": "GET",
+				"header": [],
+				"url": {
+					"raw": "https://bugzilla.mozilla.org/rest/bug",
+					"protocol": "https",
+					"host": [
+						"bugzilla",
+						"mozilla",
+						"org"
+					],
+					"path": [
+						"rest",
+						"bug"
+					],
+					"query": [
+						{
+							"key": "product",
+							"value": "Firefox",
+							"disabled": true
+						},
+						{
+							"key": "product",
+							"value": "Core",
+							"disabled": true
+						},
+						{
+							"key": "limit",
+							"value": "3",
+							"disabled": true
+						},
+						{
+							"key": "order",
+							"value": "bug_id DESC",
+							"disabled": true
+						}
+					]
+				}
+			},
+			"response": []
+		},
+		{
+			"name": "Bug history by bug_id",
+			"request": {
+				"method": "GET",
+				"header": [],
+				"url": {
+					"raw": "https://bugzilla.mozilla.org/rest/bug/1502342/history",
+					"protocol": "https",
+					"host": [
+						"bugzilla",
+						"mozilla",
+						"org"
+					],
+					"path": [
+						"rest",
+						"bug",
+						"1502342",
+						"history"
+					]
+				}
+			},
+			"response": []
+		},
+		{
+			"name": "Get comment by bug_id",
+			"request": {
+				"method": "GET",
+				"header": [],
+				"url": {
+					"raw": "https://bugzilla.mozilla.org/rest/bug/1509308/comment",
+					"protocol": "https",
+					"host": [
+						"bugzilla",
+						"mozilla",
+						"org"
+					],
+					"path": [
+						"rest",
+						"bug",
+						"1509308",
+						"comment"
+					]
+				}
+			},
+			"response": []
+		},
+		{
+			"name": "Get ALL flag_activity",
+			"request": {
+				"method": "GET",
+				"header": [],
+				"url": {
+					"raw": "https://bugzilla.mozilla.org/rest/review/flag_activity",
+					"protocol": "https",
+					"host": [
+						"bugzilla",
+						"mozilla",
+						"org"
+					],
+					"path": [
+						"rest",
+						"review",
+						"flag_activity"
+					]
+				}
+			},
+			"response": []
+		},
+		{
+			"name": "GET multiple bugs by bug_ids",
+			"request": {
+				"method": "GET",
+				"header": [],
+				"url": {
+					"raw": "https://bugzilla.mozilla.org/rest/bug?id=1186776,1186773,1182776",
+					"protocol": "https",
+					"host": [
+						"bugzilla",
+						"mozilla",
+						"org"
+					],
+					"path": [
+						"rest",
+						"bug"
+					],
+					"query": [
+						{
+							"key": "id",
+							"value": "1186776,1186773,1182776"
+						}
+					]
+				}
+			},
+			"response": []
+		},
+		{
+			"name": "GET bug (Optimize query)",
+			"request": {
+				"method": "GET",
+				"header": [],
+				"url": {
+					"raw": "https://bugzilla.mozilla.org/rest/bug?limit=3&offset=0&order=bug_id DESC&bug_id_type=nowords&bug_id=0&include_fields=id,status",
+					"protocol": "https",
+					"host": [
+						"bugzilla",
+						"mozilla",
+						"org"
+					],
+					"path": [
+						"rest",
+						"bug"
+					],
+					"query": [
+						{
+							"key": "limit",
+							"value": "3"
+						},
+						{
+							"key": "offset",
+							"value": "0"
+						},
+						{
+							"key": "order",
+							"value": "bug_id ASC",
+							"description": "sort bug_id ASC.",
+							"disabled": true
+						},
+						{
+							"key": "order",
+							"value": "bug_id DESC",
+							"description": "sort bug_id DESC."
+						},
+						{
+							"key": "bug_id_type",
+							"value": "nowords",
+							"description": "This means exclude all bugs from 'bug_id' field."
+						},
+						{
+							"key": "bug_id",
+							"value": "0"
+						},
+						{
+							"key": "include_fields",
+							"value": "id,status"
+						},
+						{
+							"key": "include_fields",
+							"value": "cf_last_resolved,description,type,product,id,cf_user_story,resolution,status, comments.creation_time,comments.raw_text, comments.count,summary,component,history.when,history.changes,alias",
+							"disabled": true
+						}
+					]
+				}
+			},
+			"response": []
+		}
+	]
+}

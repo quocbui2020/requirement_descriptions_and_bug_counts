@@ -1,0 +1,169 @@
+// https://dbdiagram.io/d/66bc97af8b4bb5230e1968f4
+
+Table "Bugzilla" {
+  "id" int [not null]
+  "bug_title" varchar(1000)
+  "alias" varchar(500)
+  "product" varchar(100) [not null]
+  "component" varchar(100)
+  "type" varchar(50) [not null]
+  "status" varchar(50) [not null]
+  "resolution" varchar(50) [not null]
+  "resolved_comment_datetime" datetime
+  "bug_description" varchar(max)
+  "user_story" varchar(max)
+  "potential_hashes" varchar(max)
+  "changeset_links" varchar(max)
+  "inserted_on" datetime [not null]
+  Indexes {
+    id [pk]
+  }
+}
+Ref: Bugzilla.alias - CVE_Vulnerabilities.CVE_ID
+
+Table "Bugzilla_Mozilla_Changeset_Files" {
+  "Unique_Hash" varchar
+  "Changeset_Hash_ID" varchar(40) [not null]
+  "Previous_File_Name" varchar(1000) [not null]
+  "Updated_File_Name" varchar(1000) [not null]
+  "File_Status" varchar(100) [not null]
+  "Previous_File_Link" varchar(2000)
+  "Updated_File_Link" varchar(2000)
+  "Inserted_On" datetime [not null]
+  "Task_Group" smallint
+  "Row_Num" int
+  "Process_Status" varchar(200)
+  Indexes {
+    // (hashbytes('SHA2_256',concat([Changeset_Hash_ID],[Previous_File_Name],[Updated_File_Name])))
+    Unique_Hash [pk]
+  }
+}
+Ref: Bugzilla_Mozilla_Changeset_Files.Changeset_Hash_ID > Bugzilla_Mozilla_Changesets.Hash_Id
+
+Table "Bugzilla_Mozilla_Comment_Changeset_Links" {
+  "Hash_ID" varchar(40)
+  "Changeset_Links" varchar(max)
+  "Mercurial_Type" varchar(100)
+  "Full_Link" varchar(200)
+  "Task_Group" smallint
+  "Is_Valid_Link" bit
+  "Is_Processed" bit [not null]
+  "ID" uniqueidentifier [not null]
+  Indexes {
+    ID [pk]
+  }
+}
+Ref: Bugzilla_Mozilla_Comment_Changeset_Links.Changeset_Links - Bugzilla.changeset_links
+
+/*
+This table was created as a temporary to processs
+each changeset links found in the comments.
+*/
+Table "Temp_Comment_Changesets_For_Process" {
+  "Row_Num" int // This is Q1 Row_Num
+  "Task_Group" int
+  "Q1_Hash_ID" varchar(40)
+  "Q1_Mercurial_Type" varchar(255)
+  "Q1_Full_Link" varchar(2000)
+  "Q1_ID" uniqueidentifier
+  // Don't rely on Q2 entirely.
+  "Q2_Hash_Id" varchar(40)
+  "Q2_Mercurial_Type" varchar(255) // Better to 'Bugzilla_Mozilla_Changesets.Mercurial_Type' instead of rely on this field since this field isn't being updated.
+  "Q2_Is_Backed_Out_Changeset" bit
+  "Q2_Backed_Out_By" varchar(255)
+  "Q2_Bug_Ids" varchar(max)
+  "Q2_Parent_Hashes" varchar(5000)
+  "Bugzilla_ID" int
+  "Bugzilla_Resolution" varchar(255)
+  "Is_Finished_Process" bit [not null]
+  "Process_Status" varchar(200)
+  "ID" uniqueidentifier [not null]
+  Indexes {
+    ID [pk]
+  }
+}
+Ref: Temp_Comment_Changesets_For_Process.Q1_ID - Bugzilla_Mozilla_Comment_Changeset_Links.ID
+Ref: Temp_Comment_Changesets_For_Process.Q2_Hash_Id > Bugzilla_Mozilla_Changesets.Hash_Id
+Ref: Temp_Comment_Changesets_For_Process.Bugzilla_ID > Bugzilla.id
+
+/*
+This is an important table, which is used for
+the next step.
+This table contains all the info when access the changeset link.
+*/
+Table "Bugzilla_Mozilla_Changesets" {
+  "Hash_Id" varchar(40) [not null]
+  "Changeset_Summary" varchar(max)
+  "Bug_Ids" varchar(max)
+  "Changeset_Link" varchar(max) [not null] // This is changeset link endpoints. Let not update this for now. We can used this field to indicate which one has been added later.
+  "Mercurial_Type" varchar(1000) [not null]
+  "Changeset_Datetime" varchar(1000) [not null]
+  "Is_Backed_Out_Changeset" bit
+  "Backed_Out_By" varchar(1000)
+  "Backout_Hashes" varchar(max)
+  "Parent_Hashes" varchar(5000)
+  "Child_Hashes" varchar(5000)
+  "Inserted_On" datetime [not null]
+  "Task_Group" int
+  Indexes {
+    Hash_Id [pk]
+  }
+}
+
+Table "Bugzilla_Error_Log" {
+  "ID" uniqueidentifier [not null]
+  "Bug_ID" int
+  "Request_Url" varchar(500)
+  "Error_Messages" varchar(500) [not null]
+  "Detail_Error_Message" varchar(max)
+  "Offset" nchar(10)
+  "Limit" nchar(10)
+  "Completed" bit [not null]
+  "inserted_on" datetime [not null]
+  Indexes {
+    ID [pk]
+  }
+}
+
+
+Table "Bugzilla_Mozilla_Changeset_BugIds" {
+  "Unique_Hash" varchar
+  "Changeset_Hash_ID" varchar(40)
+  "Bug_ID" varchar(50)
+  "Type" varchar(50)
+  Indexes {
+    Unique_Hash [pk]
+  }
+}
+ref: Bugzilla_Mozilla_Changeset_BugIds.Changeset_Hash_ID > Bugzilla_Mozilla_Changesets.Hash_Id
+ref: Bugzilla_Mozilla_Changeset_BugIds.Changeset_Hash_ID > Bugzilla.id
+
+
+Table "Bugzilla_Mozilla_Functions" {
+  "Unique_Hash" varchar
+  "Changeset_File_Unique_Hash" varbinary(8000) [not null]
+  "Function_Signature" varchar(5000) [not null]
+  "Function_Status" varchar(100) [not null]
+  "Inserted_On" datetime [not null]
+  Indexes {
+    Unique_Hash [pk]
+  }
+}
+ref: Bugzilla_Mozilla_Functions.Changeset_File_Unique_Hash - Bugzilla_Mozilla_Changeset_Files.Unique_Hash
+
+Table "CVE_Vulnerabilities" {
+  "CVE_ID" varchar(200) [not null]
+  "CWE_ID" varchar(200)
+  "Description" varchar(2000)
+  "CVSS_Metric_BaseScores" varchar(2000)
+  "CVE_Published_On" varchar(200)
+  "CVE_Last_Modified" varchar(200)
+  "CVE_Vuln_Status" varchar(200)
+  "Source_Identifier" varchar(200)
+  "CVE_API_Response" varchar(max)
+  "Inserted_On" datetime
+
+  Indexes {
+    CVE_ID [pk]
+  }
+}
