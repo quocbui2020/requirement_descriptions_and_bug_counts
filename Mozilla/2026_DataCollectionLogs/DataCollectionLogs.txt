@@ -1,0 +1,43 @@
+Database: `MozillaDataSet2026`
+1) Create a table `Bugs`:
+
+CREATE TABLE [dbo].[Bugs](
+	[ID] [int] NOT NULL,
+	[Bug_Title] [varchar](1000) NULL,
+	[Alias] [varchar](500) NULL,
+	[Product] [varchar](100) NOT NULL,
+	[Component] [varchar](100) NULL,
+	[Type] [varchar](50) NOT NULL,
+	[Status] [varchar](50) NOT NULL,
+	[Resolution] [varchar](50) NOT NULL,
+	[Resolved_Comment_DateTime] [datetime] NULL,
+	[Bug_Description] [varchar](max) NULL,
+	[User_Story] [varchar](max) NULL,
+	[Severity] [varchar](100) NULL,
+	[Priority] [varchar](100) NULL,
+	[Last_Change_Time] [datetime] NULL,
+	[Inserted_On] [datetime] NOT NULL,
+	CONSTRAINT [PK_Bugs] PRIMARY KEY CLUSTERED 
+	(
+		[ID] ASC
+	) WITH (PAD_INDEX = OFF, STATISTICS_NORECOMPUTE = OFF, IGNORE_DUP_KEY = OFF, ALLOW_ROW_LOCKS = ON, ALLOW_PAGE_LOCKS = ON, OPTIMIZE_FOR_SEQUENTIAL_KEY = OFF) ON [PRIMARY]
+) ON [PRIMARY] TEXTIMAGE_ON [PRIMARY]
+GO
+
+
+
+
+2) Create a table `Bug_Properties`. List of current properties: Regressions, regressed_by, depend_on, blocks:
+
+CREATE TABLE [dbo].[Bug_Properties](
+	[Unique_ID] AS (hashbytes('SHA2_256',concat([Name],[Bug_Id], [Value]))) PERSISTED,
+	[Name] [varchar](100) NOT NULL,
+	[Bug_ID] [int] NOT NULL,
+	[Value] [varchar](max) NULL,
+	CONSTRAINT [PK_Bug_Properties] PRIMARY KEY CLUSTERED 
+	(
+		[Name] ASC
+	) WITH (PAD_INDEX = OFF, STATISTICS_NORECOMPUTE = OFF, IGNORE_DUP_KEY = OFF, ALLOW_ROW_LOCKS = ON, ALLOW_PAGE_LOCKS = ON, OPTIMIZE_FOR_SEQUENTIAL_KEY = OFF) ON [PRIMARY],
+	CONSTRAINT [FK_Bug_Properties_Bugs] FOREIGN KEY ([Bug_Id]) REFERENCES [dbo].[Bugs]([ID])
+) ON [PRIMARY] TEXTIMAGE_ON [PRIMARY]
+GO
