@@ -1,4 +1,5 @@
 Database: `MozillaDataSet2026`
+
 1) Create a table `Bugs`:
 
 CREATE TABLE [dbo].[Bugs](
@@ -24,20 +25,351 @@ CREATE TABLE [dbo].[Bugs](
 ) ON [PRIMARY] TEXTIMAGE_ON [PRIMARY]
 GO
 
-
-
+------------------------------------------------------------------------
 
 2) Create a table `Bug_Properties`. List of current properties: Regressions, regressed_by, depend_on, blocks:
 
 CREATE TABLE [dbo].[Bug_Properties](
-	[Unique_ID] AS (hashbytes('SHA2_256',concat([Name],[Bug_Id], [Value]))) PERSISTED,
+	[Unique_ID]  AS (hashbytes('SHA2_256',concat([Name],[Bug_Id],[Value]))) PERSISTED NOT NULL,
 	[Name] [varchar](100) NOT NULL,
 	[Bug_ID] [int] NOT NULL,
 	[Value] [varchar](max) NULL,
-	CONSTRAINT [PK_Bug_Properties] PRIMARY KEY CLUSTERED 
-	(
-		[Name] ASC
-	) WITH (PAD_INDEX = OFF, STATISTICS_NORECOMPUTE = OFF, IGNORE_DUP_KEY = OFF, ALLOW_ROW_LOCKS = ON, ALLOW_PAGE_LOCKS = ON, OPTIMIZE_FOR_SEQUENTIAL_KEY = OFF) ON [PRIMARY],
-	CONSTRAINT [FK_Bug_Properties_Bugs] FOREIGN KEY ([Bug_Id]) REFERENCES [dbo].[Bugs]([ID])
+ CONSTRAINT [PK_Bug_Properties] PRIMARY KEY CLUSTERED 
+(
+	[Unique_ID] ASC
+)WITH (PAD_INDEX = OFF, STATISTICS_NORECOMPUTE = OFF, IGNORE_DUP_KEY = OFF, ALLOW_ROW_LOCKS = ON, ALLOW_PAGE_LOCKS = ON, OPTIMIZE_FOR_SEQUENTIAL_KEY = OFF) ON [PRIMARY]
 ) ON [PRIMARY] TEXTIMAGE_ON [PRIMARY]
 GO
+
+ALTER TABLE [dbo].[Bug_Properties]  WITH CHECK ADD  CONSTRAINT [FK_Bug_Properties_Bugs] FOREIGN KEY([Bug_ID])
+REFERENCES [dbo].[Bugs] ([ID])
+GO
+
+ALTER TABLE [dbo].[Bug_Properties] CHECK CONSTRAINT [FK_Bug_Properties_Bugs]
+GO
+
+------------------------------------------------------------------------
+
+3) Execute the python script to collect bugs dataset:
+
+from bugbug import bugzilla, db
+db.download(bugzilla.BUGS_DB)
+
+------------------------------------------------------------------------
+
+4) Execute 'MozillaBugScraper_bugbug.py' to move data from bugs data to db
+Discovered: Looks like dataset from `bugbug` consists of only 254,509 bugs. Our old dataset consists of 1.7 millions bugs. Therefore, I store bugbug data into [Bug_Properties_bugbug] and [Bugs_bugbug] tables, and created two new tables
+[Bug_Properties_bugbug] and [Bugs_bugbug]
+
+------------------------------------------------------------------------
+
+5) Execute 'MozillaBugScraper_bugzillaAPI.py' to scrap bug data using Bugzilla Rest API (Traditional way)
+Note: After completed the scrapping, I ran the script here to see if there are any bugs existing in the old database but not new database:
+
+select *
+from ResearchDatasets.dbo.Bugzilla old
+left join Bugs new on new.id = old.id
+where new.id is null
+
+I got back handful of bugs. However, when I tried to access those bug pages, I saw "Access Denied". It seems like those bugs are changed to private. For example: https://bugzilla.mozilla.org/show_bug.cgi?id=1890864
+
+TODO: We can used the advanced filter to build a script to check for the updates/changes in the mozilla bug database based on the input datetime. So that, we don't have to re-scraping the entire database again.
+https://bugzilla.mozilla.org/rest/bug?chfield=alias&chfieldfrom=2026-02-06&query_format=advanced&chfieldto=2026-02-09
+------------------------------------------------------------------------
+
+6) Create table `Shortlog_MozillaCentral_webrequest`
+**NOTE: THIS TABLE HAS BEEN REMOVED**
+
+CREATE TABLE [dbo].[Shortlog_MozillaCentral_webrequest](
+	[Hash_Id] [varchar](40) NOT NULL,	-- Changeset ID
+	[Changeset_Summary] [varchar](max) NULL,
+	[Changeset_Datetime] [varchar](200) NOT NULL,
+	[Inserted_On] [datetime] NOT NULL,
+ CONSTRAINT [PK_Bugzilla_Mozilla_ShortLog] PRIMARY KEY CLUSTERED 
+(
+	[Hash_Id] ASC
+)WITH (PAD_INDEX = OFF, STATISTICS_NORECOMPUTE = OFF, IGNORE_DUP_KEY = OFF, ALLOW_ROW_LOCKS = ON, ALLOW_PAGE_LOCKS = ON, OPTIMIZE_FOR_SEQUENTIAL_KEY = OFF) ON [PRIMARY]
+) ON [PRIMARY] TEXTIMAGE_ON [PRIMARY]
+GO
+
+------------------------------------------------------------------------
+
+7) Migrate data from ResearchDatasets.dbo.Bugzilla_Mozilla_Changesets -> Shortlog_MozillaCentral_webrequest
+**NOTE: THIS TABLE HAS BEEN REMOVED**
+
+INSERT INTO [dbo].[Shortlog_MozillaCentral_webrequest]
+    ([Hash_Id]
+    ,[Changeset_Summary]
+    ,[Changeset_Datetime]
+    ,[Inserted_On])
+select
+    Hash_Id
+    ,Changeset_Summary
+    ,Changeset_Datetime
+    ,GETDATE()
+from ResearchDatasets.dbo.Bugzilla_Mozilla_Changesets
+where Mercurial_Type like '%mozilla-central%'
+
+Note: Most recent record in `ResearchDatasets.dbo.Bugzilla_Mozilla_Changesets` is has_id='239b0e59042a82e9d970abe120b2815e562264c3'. I found most recent record by running this query order the records by their [Changeset_Datetime]:
+
+select Changeset_Datetime
+	,SWITCHOFFSET(
+        CAST(
+            STUFF(Changeset_Datetime, LEN(Changeset_Datetime) - 1, 0, ':')
+            AS datetimeoffset
+        ),
+        '+00:00'
+    ) AS utc_time -- Convert all datetime into utc datetime.
+	,*
+from Bugzilla_Mozilla_Changesets
+where 1=1
+and Mercurial_Type like '%mozilla-central%'
+order by utc_time desc;
+
+------------------------------------------------------------------------
+
+8) Create table `Mozilla_Changesets_Properties`
+**NOTE: THIS TABLE HAS BEEN REMOVED**
+
+CREATE TABLE [dbo].[Mozilla_Changesets_Properties](
+	[Mozilla_Changeset_ID] [varchar](40) NOT NULL, -- PK and FK to the table [Shortlog_MozillaCentral].[Hash_ID]
+	[Bug_Ids_Found_In_Title] [varchar](100) NULL,
+	[Is_Backed_Out_Changeset] BIT NOT NULL,
+	[Backed_Out_By_Changeset_ID] [varchar](40) NULL,
+	[Backout_Changeset_IDs] [varchar](max) NULL,
+	[Parent_Changeset_IDs] [varchar](300) NULL,
+	[Child_Changeset_IDs] [varchar](300) NULL,
+ CONSTRAINT [PK_Mozilla_Changesets_Properties] PRIMARY KEY CLUSTERED 
+(
+	[Mozilla_Changeset_ID] ASC
+) WITH (PAD_INDEX = OFF, STATISTICS_NORECOMPUTE = OFF, IGNORE_DUP_KEY = OFF, ALLOW_ROW_LOCKS = ON, ALLOW_PAGE_LOCKS = ON, OPTIMIZE_FOR_SEQUENTIAL_KEY = OFF) ON [PRIMARY]
+) ON [PRIMARY];
+
+------------------------------------------------------------------------
+
+9) Migrate data from `ResearchDatasets.dbo.Bugzilla_Mozilla_Changesets` -> `Mozilla_Changesets_Properties`
+**NOTE: THIS TABLE HAS BEEN REMOVED**
+
+INSERT INTO [dbo].[Mozilla_Changesets_Properties]
+    ([Mozilla_Changeset_ID]
+    ,[Is_Backed_Out_Changeset]
+    ,[Backed_Out_By_Changeset_ID]
+    ,[Backout_Changeset_IDs]
+    ,[Parent_Changeset_IDs]
+    ,[Child_Changeset_IDs])
+select
+    c.Hash_Id
+    ,c.Is_Backed_Out_Changeset
+    ,c.Backed_Out_By
+    ,c.Backout_Hashes
+    ,c.Parent_Hashes
+    ,c.Child_Hashes
+from Shortlog_MozillaCentral_webrequest s
+inner join ResearchDatasets.dbo.Bugzilla_Mozilla_Changesets c on c.Hash_Id = s.Hash_Id
+
+------------------------------------------------------------------------
+
+10) Running `HgShortlogScraper_webrequest.py` to scrap for the "https://hg.mozilla.org/mozilla-central/shortlog/" from the tip of the list till the latest record we have in the database.
+I used this script to keep track of the data collection. The lastest existing record I have in the database has the inserted_on='2026-02-07 22:55:59.320'. After the data collection completed, you can change order by utc_time to 'desc'. This will order the records exactly similar to what you see in the mozilla shortlist.
+
+select top 6
+	SWITCHOFFSET(
+        CAST(
+            STUFF(Changeset_Datetime, LEN(Changeset_Datetime) - 1, 0, ':')
+            AS datetimeoffset
+        ),
+        '+00:00'
+    ) AS utc_time -- Convert all datetime into utc datetime.
+	,*
+from Shortlog_MozillaCentral_webrequest
+where inserted_on >= '2026-02-07 22:55:59.320'
+order by utc_time asc 
+
+------------------------------------------------------------------------
+
+11) Create a table [HgGit_Mappings]
+
+CREATE TABLE [dbo].[HgGit_Mappings](
+	[Hg_Changeset_ID] [varchar](40) NOT NULL,
+	[Git_Commit_ID] [varchar](40) NOT NULL,
+ CONSTRAINT [PK_HgGit_Mappings] PRIMARY KEY CLUSTERED 
+(
+	[Hg_Changeset_ID] ASC
+)WITH (PAD_INDEX = OFF, STATISTICS_NORECOMPUTE = OFF, IGNORE_DUP_KEY = OFF, ALLOW_ROW_LOCKS = ON, ALLOW_PAGE_LOCKS = ON, OPTIMIZE_FOR_SEQUENTIAL_KEY = OFF) ON [PRIMARY]
+) ON [PRIMARY]
+
+------------------------------------------------------------------------
+
+12) Running `HgGitMapper.py` to collect the mapping between Hg Changeset ID and Git Commit ID.
+--> This may take a while
+
+------------------------------------------------------------------------
+
+13) Download "Mozilla Foundation Security Advisories" information from (https://github.com/mozilla/foundation-security-advisories). All the advisories information is in the folder 'announce'.
+
+------------------------------------------------------------------------
+
+14) Create tables to store Mozilla Foundation Security Advisory information:
+
+CREATE TABLE [dbo].[MSFA_Details]( -- Metadata of each MSFA files.
+	[MSFA_version] [varchar](15) NOT NULL,
+	[Title] [varchar](200) NULL,
+	[Announced] [varchar](30) NULL,
+	[Impact] [varchar](100) NULL,
+	[Fixed_In] [varchar](max) NULL,
+ CONSTRAINT [PK_MSFA_Details] PRIMARY KEY CLUSTERED 
+(
+	[MSFA_version] ASC
+)WITH (PAD_INDEX = OFF, STATISTICS_NORECOMPUTE = OFF, IGNORE_DUP_KEY = OFF, ALLOW_ROW_LOCKS = ON, ALLOW_PAGE_LOCKS = ON, OPTIMIZE_FOR_SEQUENTIAL_KEY = OFF) ON [PRIMARY]
+) ON [PRIMARY] TEXTIMAGE_ON [PRIMARY]
+
+CREATE TABLE [dbo].[MSFA_Vulnerabilities]( -- Each security vulnerabilities.
+	[MFSA_Version] [varchar](15) NOT NULL,
+	[Impact] [varchar](100) NOT NULL,
+	[CVE] [varchar](20) NULL,
+	[Title] [varchar](200) NULL,
+	[Description] [nvarchar](max) NULL
+) ON [PRIMARY] TEXTIMAGE_ON [PRIMARY]
+GO
+
+CREATE TABLE [dbo].[Bugs_MSFA_Mappings](
+	[Bug_Id] [int] NOT NULL,
+	[MFSA_version] [varchar](15) NOT NULL,
+ CONSTRAINT [PK_Bugs_MSFA_Mappings] PRIMARY KEY CLUSTERED 
+(
+	[Bug_Id] ASC,
+	[MFSA_version] ASC
+)WITH (PAD_INDEX = OFF, STATISTICS_NORECOMPUTE = OFF, IGNORE_DUP_KEY = OFF, ALLOW_ROW_LOCKS = ON, ALLOW_PAGE_LOCKS = ON, OPTIMIZE_FOR_SEQUENTIAL_KEY = OFF) ON [PRIMARY]
+) ON [PRIMARY]
+
+------------------------------------------------------------------------
+
+15) Excuting `SecurityAdvisoriesExtractor.py` to extract information from 'announce' folder into `vulnerabilities.json` and `mfsa_metadata.json` files.
+After that, the program also import data from those 2 files into database [MSFA_Details], [MSFA_Vulnerabilities], and [Bugs_MSFA_Mappings].
+Requirement: we must have folder `announce` beforehand. This folder can be downloaded from (https://github.com/mozilla/foundation-security-advisories).
+As long as we keep this folder neat and clean, we can rerun the python script to automatically update the database tables.
+
+------------------------------------------------------------------------
+
+16) Create tables: [GitCommitList] and [GitCommitParents]
+
+CREATE TABLE [dbo].[GitCommitList](
+	[Git_Commit_ID] [varchar](40) NOT NULL,
+	[Date] [datetime] NULL,
+	[Message] [varchar](max) NULL,
+	[is_merge] [bit] NOT NULL,
+	[Inserted_On] [datetime] NULL,
+ CONSTRAINT [PK_GitCommitList] PRIMARY KEY CLUSTERED 
+(
+	[Git_Commit_ID] ASC
+)WITH (PAD_INDEX = OFF, STATISTICS_NORECOMPUTE = OFF, IGNORE_DUP_KEY = OFF, ALLOW_ROW_LOCKS = ON, ALLOW_PAGE_LOCKS = ON, OPTIMIZE_FOR_SEQUENTIAL_KEY = OFF) ON [PRIMARY]
+) ON [PRIMARY] TEXTIMAGE_ON [PRIMARY];
+
+
+CREATE TABLE [dbo].[GitCommitParents](
+	[Git_Commit_ID] [varchar](40) NOT NULL,
+	[Parent_ID] [varchar](40) NOT NULL,
+ CONSTRAINT [PK_GitCommitParents] PRIMARY KEY CLUSTERED 
+(
+	[Git_Commit_ID] ASC,
+	[Parent_ID] ASC
+)WITH (PAD_INDEX = OFF, STATISTICS_NORECOMPUTE = OFF, IGNORE_DUP_KEY = OFF, ALLOW_ROW_LOCKS = ON, ALLOW_PAGE_LOCKS = ON, OPTIMIZE_FOR_SEQUENTIAL_KEY = OFF) ON [PRIMARY]
+) ON [PRIMARY];
+
+ALTER TABLE [dbo].[GitCommitParents]
+ADD CONSTRAINT [FK_GitCommitParents_GitCommitList] 
+FOREIGN KEY([Backout_Commit_ID]) REFERENCES [dbo].[GitCommitList] ([Git_Commit_ID]);
+
+------------------------------------------------------------------------
+
+17) Execute the `GitCommitListScrapper.py` to get store data in [GitCommitList] and [GitCommitParents]
+*Requirements: Clone Github Git repository `firefox` into local machine. (2/12/2026 7:21 AM Central Time)
+
+------------------------------------------------------------------------
+
+18) Clone firefox_mercurial repo: (venv311) PS C:\Users\quocb\quocbui\Studies\research\GithubRepo\requirement_descriptions_and_bug_counts> hg clone https://hg.mozilla.org/mozilla-central/ C:\Users\quocb\quocbui\Studies\research\GithubRepo\firefox_mercurial\
+(2/12/2026 12:58 PM Central Time) - Why datetime important? - The code source being updated constantly over time. The time indicates a specific datetime we stopped collecting data.
+------------------------------------------------------------------------
+
+19) Create table [Shortlog_MozillaCentral_localmachine]:
+
+CREATE TABLE [dbo].[Shortlog_MozillaCentral_localmachine](
+	[Hash_Id] [varchar](40) NOT NULL,
+	[Changeset_Summary] [varchar](max) NULL,
+	[Changeset_Datetime] [varchar](200) NOT NULL,
+	[Inserted_On] [datetime] NOT NULL,
+ CONSTRAINT [PK_Bugzilla_Mozilla_ShortLog_localmachine] PRIMARY KEY CLUSTERED 
+(
+	[Hash_Id] ASC
+)WITH (PAD_INDEX = OFF, STATISTICS_NORECOMPUTE = OFF, IGNORE_DUP_KEY = OFF, ALLOW_ROW_LOCKS = ON, ALLOW_PAGE_LOCKS = ON, OPTIMIZE_FOR_SEQUENTIAL_KEY = OFF) ON [PRIMARY]
+) ON [PRIMARY] TEXTIMAGE_ON [PRIMARY]
+
+------------------------------------------------------------------------
+
+20) Execute script `HgShortlogScraper_localmachine.py` to retrieve changesets shortlog in more efficient manner. (Mining from mercurial firefox in local machine)
+--> Only take couple minutes (nice!)
+
+------------------------------------------------------------------------
+
+21) After validating table [Shortlog_MozillaCentral_localmachine] and [Shortlog_MozillaCentral_webrequest], I decided to:
+- Dropped table [Shortlog_MozillaCentral_webrequest]
+- Renamed table [Shortlog_MozillaCentral_localmachine] --> [Changesets]
+- Dropped table [Mozilla_Changesets_Properties]
+
+------------------------------------------------------------------------
+
+22) Alter [Changesets] table to include couple more columns and add new table [Changeset_Properties]:
+ALTER TABLE [Changesets]
+ADD is_merge BIT NULL;
+
+ALTER TABLE [Changesets]
+ADD backed_out BIT NULL;
+
+ALTER TABLE [Changesets]
+ADD is_backout_changeset BIT NULL;
+
+ALTER TABLE [Changesets]
+ADD Description varchar(max) NULL;
+
+CREATE TABLE [dbo].[Changeset_Properties](
+	[Unique_ID]  AS (hashbytes('SHA2_256',concat([Hg_Changeset_ID],[Name],[Value]))) PERSISTED NOT NULL,
+	[Hg_Changeset_ID] [varchar](40) NOT NULL,
+	[Name] [varchar](100) NOT NULL,
+	[Value] [varchar](5000) NOT NULL,
+ CONSTRAINT [PK_Changeset_Properties] PRIMARY KEY CLUSTERED 
+(
+	[Unique_ID] ASC
+)WITH (PAD_INDEX = OFF, STATISTICS_NORECOMPUTE = OFF, IGNORE_DUP_KEY = OFF, ALLOW_ROW_LOCKS = ON, ALLOW_PAGE_LOCKS = ON, OPTIMIZE_FOR_SEQUENTIAL_KEY = OFF) ON [PRIMARY]
+) ON [PRIMARY]
+GO
+
+------------------------------------------------------------------------
+
+23) Run `HgChangesetsDetailsExtractor.py` to extract detailed information of each changesets
+Requirement:
+	- Mercurial firefox project has been downloaded in local machine.
+	- HgGitMapper.py has been completed (Optional but strongly recommended)
+
+This script filled columns in table [Changesets]:
+	- is_merge, backed_out, is_backout_changeset, Description
+This script also save the following properties in table [Changeset_Properties]:
+	- Parent Changeset, Child Changeset, Backout Changeset, Backed Out By, Bug ID Mentioned
+	
+
+------------------------------------------------------------------------
+
+24) Implement the script to extract modified function and files
+
+
+
+
+TODO: Update the HgGitMapper.py so that it will go through `GitCommitList` to convert and Git ID back to Changeset ID.
+
+
+
+
+
+
+
+
+

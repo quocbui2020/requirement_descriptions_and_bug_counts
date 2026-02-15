@@ -9,12 +9,20 @@ pyautogui.FAILSAFE = False
 automation_enabled = True
 
 def press_key(interval, key):
+    key = key.lower()
+
     while True:
         if automation_enabled:
             try:
-                pyautogui.press(key)
+                # Use keyboard library for extended function keys
+                if key.startswith('f') and key[1:].isdigit() and int(key[1:]) >= 13:
+                    keyboard.press_and_release(key)
+                else:
+                    pyautogui.press(key)
+
             except Exception as e:
-                print(f"Error pressing key: {e}")
+                print(f"Error pressing key '{key}': {e}")
+
         time.sleep(interval)
 
 def mouse_click(interval, button):

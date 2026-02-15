@@ -1,6 +1,7 @@
 venv/
 venv311/
 data/
+announce/
 .env/
 __pycache__/
 *.pyc
