@@ -177,7 +177,7 @@ def verify_and_cleanup_commits(repo_url, conn_str, sample_size=1000):
         return 0
 
 
-
+def get_latest_commit_date(conn_str):
     """
     Get the most recent commit date from the database.
     
@@ -336,14 +336,13 @@ def save_commits_to_database(commits, conn_str, batch_size=1000):
                     if not exists:
                         cursor.execute(
                             """
-                            INSERT INTO GitCommitList (Git_Commit_ID, Date, Message, is_merge, is_backout)
-                            VALUES (?, ?, ?, ?, ?)
+                            INSERT INTO GitCommitList (Git_Commit_ID, Date, Message, is_merge)
+                            VALUES (?, ?, ?, ?)
                             """,
                             commit['hash'],
                             commit['date'],
                             commit['message'],
-                            1 if commit['is_merge'] else 0,
-                            1 if commit['is_backout'] else 0
+                            1 if commit['is_merge'] else 0
                         )
                         commits_inserted += 1
                     else:
@@ -378,37 +377,6 @@ def save_commits_to_database(commits, conn_str, batch_size=1000):
                             
                     except Exception as e:
                         print(f"Error inserting parent relationship {commit['hash'][:7]} -> {parent_hash[:7]}: {str(e)}")
-            
-            # Insert backout relationships
-            for commit in batch:
-                if commit['is_backout'] and commit['backed_out_hashes']:
-                    for backed_out_hash in commit['backed_out_hashes']:
-                        try:
-                            # Check if relationship exists
-                            cursor.execute(
-                                "SELECT COUNT(*) FROM GitCommitBackouts WHERE Backout_Commit_ID = ? AND Backed_Out_Commit_ID = ?",
-                                commit['hash'], backed_out_hash
-                            )
-                            exists = cursor.fetchone()[0] > 0
-                            
-                            if not exists:
-                                cursor.execute(
-                                    """
-                                    INSERT INTO GitCommitBackouts (Backout_Commit_ID, Backed_Out_Commit_ID, Reason)
-                                    VALUES (?, ?, ?)
-                                    """,
-                                    commit['hash'],
-                                    backed_out_hash,
-                                    commit['backout_reason']
-                                )
-                                backouts_inserted += 1
-                            else:
-                                backouts_skipped += 1
-                                
-                        except Exception as e:
-                            # Table might not exist yet - that's OK, skip silently
-                            if 'Invalid object name' not in str(e):
-                                print(f"Error inserting backout relationship {commit['hash'][:7]} -> {backed_out_hash[:7]}: {str(e)}")
             
             # Commit the batch
             conn.commit()

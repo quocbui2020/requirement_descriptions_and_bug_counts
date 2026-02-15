@@ -61,8 +61,11 @@ CONN_STR = 'DRIVER={ODBC Driver 18 for SQL Server};' \
            'TrustServerCertificate=yes;' \
            'Trusted_Connection=yes;'
 
-# Batch size for processing
-BATCH_SIZE = 1000
+# Batch size for database commits (commit after this many changesets)
+BATCH_SIZE = 100
+
+# Progress update frequency (print progress every N changesets)
+PROGRESS_FREQUENCY = 10
 
 # Use Mercurial search for more accurate backout detection (slower)
 # Set to False for faster processing, relies on commit message parsing only
@@ -396,6 +399,7 @@ def get_changeset_details(hash_id):
             r'[Bb]ackout\s+rev\s+([0-9a-f]{12,40})',
             
             # Git-style revert patterns (GitHub workflow) - flexible with/without "commit"
+            r'[Rr]everts?\s+commit\s+version\s+([0-9a-f]{40})',
             r'[Rr]everts?\s+(?:commit\s+)?([0-9a-f]{40})',
             r'[Tt]his\s+reverts\s+(?:commit\s+)?([0-9a-f]{40})',
             r'[Rr]evert(?:ed|ing)?\s+([0-9a-f]{40})',
@@ -752,143 +756,144 @@ def get_changesets_from_db():
 def process_all_changesets():
     """
     Process all changesets from the database and extract detailed information.
+    Uses incremental batch processing to handle large datasets (800K+ changesets).
     """
     print("=" * 80)
-    print("CHANGESET DETAILS EXTRACTOR - LOCAL MERCURIAL VERSION")
+    print("CHANGESET DETAILS EXTRACTOR - LOCAL MERCURIAL VERSION (BATCH MODE)")
     print("=" * 80)
-    print(f"Repository:  {REPO_PATH}")
-    print(f"Batch size:  {BATCH_SIZE}")
-    print(f"Start time:  {strftime('%Y-%m-%d %H:%M:%S', localtime())}")
+    print(f"Repository:       {REPO_PATH}")
+    print(f"Batch size:       {BATCH_SIZE} (commits to DB after each batch)")
+    print(f"Progress updates: Every {PROGRESS_FREQUENCY} changesets")
+    print(f"Start time:       {strftime('%Y-%m-%d %H:%M:%S', localtime())}")
     print("=" * 80)
     
-    # Step 1: Get all changesets from database
-    print("\n[STEP 1/4] Loading changesets from database...")
+    # Get all changesets from database that haven't been processed
+    print("\n[LOADING] Getting unprocessed changesets from database...")
     changesets = get_changesets_from_db()
     
     if not changesets:
-        print("[ERROR] No changesets found in database")
+        print("[INFO] No unprocessed changesets found (all have Description populated)")
         return
     
-    print(f"[INFO] Found {len(changesets)} changesets to process")
+    print(f"[INFO] Found {len(changesets):,} changesets to process")
+    print(f"[INFO] Estimated time: {len(changesets) * 3 / 3600:.1f} - {len(changesets) * 5 / 3600:.1f} hours")
+    print(f"[INFO] Processing in batches of {BATCH_SIZE}, committing to DB incrementally\n")
     
-    # Step 2: Extract details from Mercurial and build backout map
-    print("\n[STEP 2/4] Extracting details from Mercurial repository...")
+    # Batch tracking
+    backout_map_global = {}  # Track backout relationships across all batches
     
-    all_details = {}
-    backout_map = {}  # Maps backed_out_hash -> [backout_hash1, backout_hash2, ...]
-    
-    processed = 0
-    failed = 0
-    
-    for idx, hash_id in enumerate(changesets, 1):
-        if idx % 100 == 0 or idx == 1:
-            print(f"[{strftime('%H:%M:%S', localtime())}] Extracting {idx}/{len(changesets)} "
-                  f"(Processed: {processed}, Failed: {failed})", end='\r', flush=True)
-        
-        details = get_changeset_details(hash_id)
-        
-        if details:
-            all_details[hash_id] = details
-            processed += 1
-            
-            # Build backout map
-            if details['is_backout_changeset']:
-                for backed_out_hash in details['backed_out_changesets']:
-                    if backed_out_hash not in backout_map:
-                        backout_map[backed_out_hash] = []
-                    backout_map[backed_out_hash].append(hash_id)
-        else:
-            failed += 1
-    
-    print(f"\n[INFO] Extraction complete: {processed} processed, {failed} failed")
-    print(f"[INFO] Found {len(backout_map)} backed out changesets")
-    
-    # Step 3: Normalize backed-out hashes to full 40-char format
-    print("\n[STEP 3/4] Normalizing hash formats...")
-    normalized_backout_map = {}
-    for backed_out_hash, backout_list in backout_map.items():
-        # Resolve short hash to full hash if needed
-        full_hash = backed_out_hash
-        if len(backed_out_hash) < 40:
-            try:
-                cmd = ['hg', 'log', '-r', backed_out_hash, '--template', '{node}', '--cwd', REPO_PATH]
-                result = subprocess.run(cmd, capture_output=True, text=True, timeout=10, check=True)
-                resolved = result.stdout.strip()
-                if resolved and len(resolved) == 40:
-                    full_hash = resolved
-                    print(f"[Resolved] {backed_out_hash} -> {full_hash}")
-            except Exception:
-                pass
-        
-        # Merge into normalized map (in case same hash was stored multiple ways)
-        if full_hash not in normalized_backout_map:
-            normalized_backout_map[full_hash] = []
-        normalized_backout_map[full_hash].extend(backout_list)
-    
-    # Remove duplicate backout changesets in the values
-    for key in normalized_backout_map:
-        normalized_backout_map[key] = list(set(normalized_backout_map[key]))
-    
-    print(f"[INFO] Normalized map has {len(normalized_backout_map)} backed out changesets")
-    
-    # Step 4: Update database
-    print("\n[STEP 4/4] Updating database...")
-    
-    updated = 0
-    update_failed = 0
-    backed_out_updates = 0
+    # Statistics
+    total_processed = 0
+    total_failed = 0
+    total_updated = 0
+    total_backed_out_updates = 0
     batch_num = 0
     
-    for idx, (hash_id, details) in enumerate(all_details.items(), 1):
-        if idx % BATCH_SIZE == 1:
-            batch_num += 1
-            print(f"[{strftime('%H:%M:%S', localtime())}] Batch {batch_num} "
-                  f"({idx}-{min(idx + BATCH_SIZE - 1, len(all_details))} of {len(all_details)})...",
-                  end='', flush=True)
+    # Process in batches
+    for batch_start in range(0, len(changesets), BATCH_SIZE):
+        batch_end = min(batch_start + BATCH_SIZE, len(changesets))
+        batch = changesets[batch_start:batch_end]
+        batch_num += 1
         
-        # Find if this changeset was backed out (using normalized map)
-        backed_out_by = find_backed_out_by_changeset(hash_id, normalized_backout_map, USE_HG_SEARCH_FOR_BACKOUTS)
+        print(f"\n{'=' * 80}")
+        print(f"[BATCH {batch_num}] Processing {batch_start + 1}-{batch_end} of {len(changesets):,}")
+        print(f"[{strftime('%H:%M:%S', localtime())}] Started batch {batch_num}")
+        print(f"{'=' * 80}")
         
-        # Update database
-        success = update_changeset_in_db(details, backed_out_by)
+        batch_details = {}
+        batch_backout_map = {}
+        batch_processed = 0
+        batch_failed = 0
         
-        if success:
-            updated += 1
+        # Extract details for this batch
+        for idx, hash_id in enumerate(batch, 1):
+            global_idx = batch_start + idx
             
-            # If this is a backout changeset, also update the changesets it backed out
-            if details['is_backout_changeset'] and details['backed_out_changesets']:
-                count = update_backed_out_changesets_in_db(hash_id, details['backed_out_changesets'])
-                backed_out_updates += count
-        else:
-            update_failed += 1
+            if idx % PROGRESS_FREQUENCY == 0 or idx == 1:
+                print(f"  [{strftime('%H:%M:%S', localtime())}] Extracting {idx}/{len(batch)} "
+                      f"(Global: {global_idx:,}/{len(changesets):,}) - "
+                      f"OK: {batch_processed}, Failed: {batch_failed}",
+                      end='\r', flush=True)
+            
+            details = get_changeset_details(hash_id)
+            
+            if details:
+                batch_details[hash_id] = details
+                batch_processed += 1
+                
+                # Build backout map for this batch
+                if details['is_backout_changeset']:
+                    for backed_out_hash in details['backed_out_changesets']:
+                        if backed_out_hash not in batch_backout_map:
+                            batch_backout_map[backed_out_hash] = []
+                        batch_backout_map[backed_out_hash].append(hash_id)
+                        
+                        # Also add to global map
+                        if backed_out_hash not in backout_map_global:
+                            backout_map_global[backed_out_hash] = []
+                        backout_map_global[backed_out_hash].append(hash_id)
+            else:
+                batch_failed += 1
         
-        if idx % BATCH_SIZE == 0 or idx == len(all_details):
-            print(f" Done")
+        print()  # New line after progress
+        
+        # Update database for this batch
+        if batch_details:
+            print(f"  [DB UPDATE] Committing {len(batch_details)} changesets to database...")
+            
+            batch_updated = 0
+            batch_update_failed = 0
+            batch_backed_out_updates = 0
+            
+            for hash_id, details in batch_details.items():
+                # Find if this changeset was backed out (check global map)
+                backed_out_by = find_backed_out_by_changeset(hash_id, backout_map_global, False)
+                
+                # Update database
+                success = update_changeset_in_db(details, backed_out_by)
+                
+                if success:
+                    batch_updated += 1
+                    
+                    # If this is a backout changeset, update the backed out changesets
+                    if details['is_backout_changeset'] and details['backed_out_changesets']:
+                        count = update_backed_out_changesets_in_db(hash_id, details['backed_out_changesets'])
+                        batch_backed_out_updates += count
+                else:
+                    batch_update_failed += 1
+            
+            print(f"  [BATCH {batch_num} COMPLETE] Updated: {batch_updated}, "
+                  f"Failed: {batch_update_failed}, Backout links: {batch_backed_out_updates}")
+            
+            # Update totals
+            total_processed += batch_processed
+            total_failed += batch_failed
+            total_updated += batch_updated
+            total_backed_out_updates += batch_backed_out_updates
+            
+            # Progress summary
+            pct_complete = (batch_end / len(changesets)) * 100
+            print(f"  [OVERALL PROGRESS] {batch_end:,}/{len(changesets):,} ({pct_complete:.1f}%) - "
+                  f"Processed: {total_processed:,}, Updated: {total_updated:,}")
+        
+        # Clear batch details from memory
+        batch_details.clear()
     
     # Final summary
     print("\n" + "=" * 80)
     print("EXTRACTION SUMMARY")
     print("=" * 80)
-    print(f"Total changesets:              {len(changesets)}")
-    print(f"Details extracted:             {processed}")
-    print(f"Extraction failed:             {failed}")
-    print(f"Database updates successful:   {updated}")
-    print(f"Database updates failed:       {update_failed}")
-    print(f"Backout relationships found:   {len(backout_map)}")
+    print(f"Total changesets:              {len(changesets):,}")
+    print(f"Details extracted:             {total_processed:,}")
+    print(f"Extraction failed:             {total_failed:,}")
+    print(f"Database updates successful:   {total_updated:,}")
+    print(f"Backout relationships found:   {len(backout_map_global):,}")
+    print(f"Backed-out changesets updated: {total_backed_out_updates:,}")
+    print(f"Batches processed:             {batch_num}")
     print(f"End time:                      {strftime('%Y-%m-%d %H:%M:%S', localtime())}")
     print("=" * 80)
-    
-    # Additional statistics
-    merge_count = sum(1 for d in all_details.values() if d['is_merge'])
-    backout_count = sum(1 for d in all_details.values() if d['is_backout_changeset'])
-    backed_out_count = len([h for h in all_details.keys() 
-                           if find_backed_out_by_changeset(h, backout_map)])
-    
-    print("\nSTATISTICS:")
-    print(f"Merge commits:                 {merge_count}")
-    print(f"Backout commits:               {backout_count}")
-    print(f"Backed out commits:            {backed_out_count}")
-    print(f"Backed-out changesets updated: {backed_out_updates}")
+    print("\n[SUCCESS] All batches committed to database.")
+    print("[INFO] You can re-run this script anytime - it will skip already processed changesets.")
     print("=" * 80)
 
 
@@ -961,13 +966,13 @@ if __name__ == "__main__":
     # ========== CONFIGURATION ==========
     
     # MODE: "all" to process all changesets, "single" to test one changeset
-    MODE = "single"  # "all" or "single"
+    MODE = "all"  # "all" or "single"
     
     # For single mode, specify the changeset hash
     # Example: changeset that was backed out (from web interface example)
-    TEST_CHANGESET = "ce76fa05c90f3f24f8db09950eadd4a8cdec9088" # Test case: Backout changeset with Hg changeset hashes in description
+    # TEST_CHANGESET = "ce76fa05c90f3f24f8db09950eadd4a8cdec9088" # Test case: Backout changeset with Hg changeset hashes in description
     # TEST_CHANGESET = "002359e80ee7f1e64555104fb9cb53b13cb10951" # Test case: Backout commit with Git commit hashes in description
-    # TEST_CHANGESET = ""
+    TEST_CHANGESET = ""
 
     # ===================================
     

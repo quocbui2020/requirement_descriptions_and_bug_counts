@@ -204,7 +204,7 @@ def fetch_git_hash_for_hg(hg_hash):
     attempt = 0
     
     # Progressive backoff schedule: 1min, 2min, 5min, 10min, then 10min indefinitely
-    backoff_schedule = [60, 120, 300, 600]  # seconds
+    backoff_schedule = [15, 30, 60, 300]  # seconds
     
     while True:  # INFINITE RETRY - never give up!
         attempt += 1

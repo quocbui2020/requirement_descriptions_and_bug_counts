@@ -282,7 +282,7 @@ FOREIGN KEY([Backout_Commit_ID]) REFERENCES [dbo].[GitCommitList] ([Git_Commit_I
 
 ------------------------------------------------------------------------
 
-17) Execute the `GitCommitListScrapper.py` to get store data in [GitCommitList] and [GitCommitParents]
+17) Execute the `GitCommitListScraper.py` to get store data in [GitCommitList] and [GitCommitParents]
 *Requirements: Clone Github Git repository `firefox` into local machine. (2/12/2026 7:21 AM Central Time)
 
 ------------------------------------------------------------------------
@@ -345,7 +345,48 @@ GO
 
 ------------------------------------------------------------------------
 
-23) Run `HgChangesetsDetailsExtractor.py` to extract detailed information of each changesets
+23) Alter [GitCommitList] to add new columns:
+
+ALTER TABLE [GitCommitList]
+ADD backed_out BIT NULL;
+
+ALTER TABLE [GitCommitList]
+ADD is_backout_commit BIT NULL;
+
+ALTER TABLE [GitCommitList]
+ADD Description varchar(max) NULL;
+
+
+CREATE TABLE [dbo].[GitCommit_Properties](
+	[Unique_ID]  AS (hashbytes('SHA2_256',concat([Git_Commit_ID],[Name],[Value]))) PERSISTED NOT NULL,
+	[Git_Commit_ID] [varchar](40) NOT NULL,
+	[Name] [varchar](100) NOT NULL,
+	[Value] [varchar](5000) NOT NULL,
+ CONSTRAINT [PK_GitCommit_Properties] PRIMARY KEY CLUSTERED 
+(
+	[Unique_ID] ASC
+)WITH (PAD_INDEX = OFF, STATISTICS_NORECOMPUTE = OFF, IGNORE_DUP_KEY = OFF, ALLOW_ROW_LOCKS = ON, ALLOW_PAGE_LOCKS = ON, OPTIMIZE_FOR_SEQUENTIAL_KEY = OFF) ON [PRIMARY]
+) ON [PRIMARY]
+GO
+
+------------------------------------------------------------------------
+
+24) Transfer data from [GitCommitParents] to [GitCommit_Properties]:
+
+INSERT INTO [dbo].[GitCommit_Properties]
+    ([Git_Commit_ID]
+    ,[Name]
+    ,[Value])
+select Git_Commit_ID,
+    'Parent ID',
+    Parent_ID
+from GitCommitParents
+
+Drop table [GitCommitParents]
+
+------------------------------------------------------------------------
+
+**) Run `HgChangesetsDetailsExtractor.py` to extract detailed information of each changesets
 Requirement:
 	- Mercurial firefox project has been downloaded in local machine.
 	- HgGitMapper.py has been completed (Optional but strongly recommended)
@@ -355,10 +396,71 @@ This script filled columns in table [Changesets]:
 This script also save the following properties in table [Changeset_Properties]:
 	- Parent Changeset, Child Changeset, Backout Changeset, Backed Out By, Bug ID Mentioned
 	
+Tip: You can use this command before to run in PowerShell to see all information about a specific changesets:
+
+hg log -r {specific Hg Hash ID} --debug --cwd C:\Users\quocb\quocbui\Studies\research\GithubRepo\firefox_mercurial
+
+Regex to catch Bug ID and Backout/revert changesets (You can test it in https://regex101.com/):
+
+[Bb]acked?\s+out\s+(?:changeset|change set|commit|revision)s?\s+([a-f0-9]{7,40})|[Bb]ack(?:ing)?\s+out\s+(?:changeset|change set|commit|revision)s?\s+([a-f0-9]{7,40})|[Bb]ackout\s+(?:changeset|change set|commit|revision)?\s*([a-f0-9]{7,40})|[Rr]evert\s+(?:changeset|change set|commit|revision)?\s+([a-f0-9]{7,40})|[Rr]evert\s+".*".*\s+([a-f0-9]{7,40})|[Bb]acked?\s+out\s+([a-f0-9]{7,40})|[Bb]ack(?:ing)?\s+out\s+([a-f0-9]{7,40})|[Bb]ackout\s+([a-f0-9]{7,40})|[Rr]everts?\s+(?:commit\s+)?([a-f0-9]{40})|[Tt]his\s+reverts\s+(?:commit\s+)?([a-f0-9]{40})|[Rr]evert(?:ed|ing)?\s+([a-f0-9]{40})|[Bb]ug\s+([0-9]+)
+
+Test String:
+
+Backed out changeset a1b2c3d4e5f6
+Back out changeset 1234567
+Backing out changeset abcdef1234567890
+Backout changeset a1b2c3d
+Backout a1b2c3d
+Revert changeset 1234567890abcdef
+Revert "Some feature" a1b2c3d
+Backed out a1b2c3d4e5f6
+Backing out 1234567
+Reverts commit 1234567890abcdef1234567890abcdef12345678
+This reverts commit 1234567890abcdef1234567890abcdef12345678
+Reverting 1234567890abcdef1234567890abcdef12345678
+Reverted 1234567890abcdef1234567890abcdef12345678
+Bug 123456
+bug 789012
+Bug 1
+bug 99999999
+Bug  12345 (multiple spaces)
+Bug 456789 - Fix memory leak
+Fixed Bug 111222
+bug 333444: Update settings
+Fixes bug 555666 and bug 777888
+Bug 123456, Bug 234567, Bug 345678
+[Bug 999000] Critical fix
+Bug 12345 r=reviewer
 
 ------------------------------------------------------------------------
 
-24) Implement the script to extract modified function and files
+**) Transfer data:
+	- From: [Changesets] and [Changeset_Properties]
+	- To: [GitCommitList] and [GitCommit_Properties]
+	
+------------------------------------------------------------------------
+
+**) Run `GitCommitsDetailsExtractor.py` to extract detailed information of each git commit
+Requirement:
+	- Git firefox project has been downloaded in local machine.
+	- HgGitMapper.py has been completed
+
+------------------------------------------------------------------------
+
+
+**) Run `HgChangesetsDetailsExtractor.py` to extract detailed information of each changesets
+Requirement:
+	- Mercurial firefox project has been downloaded in local machine.
+	- HgGitMapper.py has been completed (Optional but strongly recommended)
+
+This script filled columns in table [Changesets]:
+	- is_merge, backed_out, is_backout_changeset, Description
+This script also save the following properties in table [Changeset_Properties]:
+	- Parent Changeset, Child Changeset, Backout Changeset, Backed Out By, Bug ID Mentioned
+
+------------------------------------------------------------------------
+
+**) Implement the script to extract modified function and files
 
 
 
@@ -372,4 +474,43 @@ TODO: Update the HgGitMapper.py so that it will go through `GitCommitList` to co
 
 
 
+
+
+
+
+
+
+
+
+/*
+cls; python .\Mozilla\HgGitMapper.py 06b66a7cf2e14c0c1b0f9099301e5c41e8e0c52f 7155e69bc42c3613901dd356371e5529bf85e855
+cls; python .\Mozilla\HgGitMapper.py 7155ef05668dd63d1b97fe6c9c7e3eb517c9acb3 8123a477b7d7c99c9f62e4fd8dc3896da4624e42
+cls; python .\Mozilla\HgGitMapper.py 8123bbb016f39b30a9727b59718eb98c111523d9 90fda57adf347395f961dc182c7cf8af5d1fec66
+cls; python .\Mozilla\HgGitMapper.py 90fdad28f7366dadce5fe457c08d81a3f5299730 a0de9c43eb2001c035ac9662688e1dd64eaee64c
+cls; python .\Mozilla\HgGitMapper.py a0deba98fde2a86b26c32b33e623ef526a377426 b0b053cb93e554b0b0dc8060d8aa3e01c993b096
+cls; python .\Mozilla\HgGitMapper.py b0b06bae7fd467c6072bdd588ed1173fed6cd68a c07ba1f49f5e52fc62820c11a41e47edd042bced
+cls; python .\Mozilla\HgGitMapper.py c07bafdcc320a6a574e70b7ed6aa1d5c44c83e30 d05d212e53906e90989db0961e5386da884cd280
+cls; python .\Mozilla\HgGitMapper.py d05d2e1fc2a1e6f9decdce457d906e53b89d399e e046475a75cb2dbcce6ebc3cd012efd7385a2142
+cls; python .\Mozilla\HgGitMapper.py e04692266f1754d8eced81a8b8ab5514f4b79722 f01a1eb49c2efde027c33bb85a02f082446c201d
+cls; python .\Mozilla\HgGitMapper.py f01a39a69e9163b5cdb037aecdbf181577c809a0 ffffedfff05367408d7796370a9fc78ad2d0aa14
+*/
+
+select * from [Changeset_Properties] order by [Hg_Changeset_ID]
+
+select top 100 * from [Changesets]
+where 1=1
+and (is_merge is not null
+	or backed_out is not null
+	or is_backout_changeset is not null)
+
+/*
+delete [Changeset_Properties]
+
+update [Changesets]
+set is_merge=null, backed_out=null, is_backout_changeset=null, [description]=null
+where is_merge is not null
+	or backed_out is not null
+	or is_backout_changeset is not null
+	or is_backout_changeset is not null
+*/
 
