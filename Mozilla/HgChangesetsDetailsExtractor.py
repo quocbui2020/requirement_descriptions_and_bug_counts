@@ -152,11 +152,40 @@ def resolve_git_to_hg(git_commit_id):
     """
     try:
         git_hash = git_commit_id.strip()
-        if not git_hash or len(git_hash) < 40:
+        if not git_hash:
             return None
         
         if DEBUG_MODE:
             print(f"[DEBUG] resolve_git_to_hg called for: {git_hash[:12]}...")
+        
+        # If short Git hash, resolve to full hash first using GitCommitList
+        if len(git_hash) < 40:
+            try:
+                conn = pyodbc.connect(CONN_STR)
+                cursor = conn.cursor()
+                
+                query = '''
+                    SELECT [Git_Commit_ID]
+                    FROM [dbo].[GitCommitList]
+                    WHERE [Git_Commit_ID] LIKE ?
+                '''
+                cursor.execute(query, git_hash + '%')
+                row = cursor.fetchone()
+                cursor.close()
+                conn.close()
+                
+                if row:
+                    git_hash = row[0]
+                    if DEBUG_MODE:
+                        print(f"[DEBUG] Resolved short Git hash to full: {git_hash[:12]}...")
+                else:
+                    if DEBUG_MODE:
+                        print(f"[DEBUG] Could not resolve short Git hash, returning None")
+                    return None
+            except Exception as e:
+                if DEBUG_MODE:
+                    print(f"[DEBUG] Error resolving short Git hash: {e}")
+                return None
         
         # Check cache first
         if git_hash in GIT_TO_HG_CACHE:
@@ -169,7 +198,7 @@ def resolve_git_to_hg(git_commit_id):
         cursor = conn.cursor()
         
         if DEBUG_MODE:
-            print(f"[DEBUG] Querying database for Git hash: {git_hash[:12]}...")
+            print(f"[DEBUG] Querying HgGit_Mappings for Git hash: {git_hash[:12]}...")
         query = '''
             SELECT [Hg_Changeset_ID]
             FROM [dbo].[HgGit_Mappings]
@@ -225,7 +254,8 @@ def identify_and_convert_hash(hash_id):
     if not hash_id or len(hash_id) < 40:
         return (hash_id, False)
     
-    print(f"[DEBUG] identify_and_convert_hash called for: {hash_id[:12]}...")
+    if DEBUG_MODE:
+        print(f"[DEBUG] identify_and_convert_hash called for: {hash_id[:12]}...")
     
     try:
         # Query database to check both columns
@@ -245,7 +275,8 @@ def identify_and_convert_hash(hash_id):
         if row:
             hg_hash, git_hash = row[0], row[1]
             
-            print(f"[DEBUG] Found in HgGit_Mappings: hg={hg_hash[:12]}, git={git_hash[:12]}")
+            if DEBUG_MODE:
+                print(f"[DEBUG] Found in HgGit_Mappings: hg={hg_hash[:12]}, git={git_hash[:12]}")
             
             # Cache both directions
             GIT_TO_HG_CACHE[git_hash] = hg_hash
@@ -253,26 +284,32 @@ def identify_and_convert_hash(hash_id):
             
             # If hash matches Git column, it's a Git hash
             if hash_id == git_hash:
-                print(f"[DEBUG] Hash is Git, returning Hg: {hg_hash[:12]}")
+                if DEBUG_MODE:
+                    print(f"[DEBUG] Hash is Git, returning Hg: {hg_hash[:12]}")
                 return (hg_hash, True)
             else:
-                print(f"[DEBUG] Hash is Hg, returning as-is: {hg_hash[:12]}")
+                if DEBUG_MODE:
+                    print(f"[DEBUG] Hash is Hg, returning as-is: {hg_hash[:12]}")
                 return (hg_hash, False)
         
-        print(f"[DEBUG] Not in HgGit_Mappings, trying API conversion...")
+        if DEBUG_MODE:
+            print(f"[DEBUG] Not in HgGit_Mappings, trying API conversion...")
         # Not in database - try to determine type and resolve
         # If it starts with typical Git patterns or API succeeds, it's Git
         hg_from_git = resolve_git_to_hg(hash_id)
         if hg_from_git:
-            print(f"[DEBUG] API conversion succeeded: {hash_id[:12]} -> {hg_from_git[:12]}")
+            if DEBUG_MODE:
+                print(f"[DEBUG] API conversion succeeded: {hash_id[:12]} -> {hg_from_git[:12]}")
             return (hg_from_git, True)
         
-        print(f"[DEBUG] No conversion found, assuming Hg hash: {hash_id[:12]}")
-        # Assume it's Hg if no conversion found
-        return (hash_id, False)
+        if DEBUG_MODE:
+            print(f"[DEBUG] No conversion found, could be Git hash with failed conversion or Hg hash: {hash_id[:12]}")
+        # Could not convert - might be Git hash that failed conversion, or might be Hg hash not in DB
+        # Return None as hg_hash to indicate uncertainty
+        return (None, None)  # Return (None, None) to indicate conversion failed/unknown
         
     except Exception:
-        return (hash_id, False)
+        return (None, None)  # Return (None, None) to indicate error
 
 # SQL Queries
 UPDATE_CHANGESET_QUERY = '''
@@ -443,7 +480,8 @@ def get_changeset_details(hash_id):
         for pattern in backout_patterns:
             matches = re.findall(pattern, description)
             if matches:
-                print(f"[DEBUG] Pattern matched: {pattern} -> {matches}")
+                if DEBUG_MODE:
+                    print(f"[DEBUG] Pattern matched: {pattern} -> {matches}")
                 backed_out_hashes.extend(matches)
 
         # Extract revision numbers and resolve to hashes
@@ -495,17 +533,31 @@ def get_changeset_details(hash_id):
                 
                 # Now that we have a full 40-char hash, validate if it's Git or Hg
                 if h and len(h) == 40:
+                    original_hash = h  # Store original before conversion
                     if DEBUG_MODE:
                         print(f"[DEBUG] Validating hash: {h[:12]}...")
                     hg_hash, is_git = identify_and_convert_hash(h)
-                    if is_git and hg_hash:
+                    
+                    if is_git is True and hg_hash and hg_hash != original_hash:
+                        # Successful Git→Hg conversion
                         if DEBUG_MODE:
-                            print(f"[Git->Hg] {h[:12]} -> {hg_hash[:12]}")
+                            print(f"[DEBUG] [Git->Hg] {original_hash[:12]} -> {hg_hash[:12]}")
                         h = hg_hash
-                    else:
+                    elif is_git is False and hg_hash:
+                        # Hash identified as Hg (not Git)
                         if DEBUG_MODE:
-                            print(f"[DEBUG] Hash is Hg (or already normalized): {h[:12]}")
-                        h = hg_hash if hg_hash else h
+                            print(f"[DEBUG] Hash is Hg: {hg_hash[:12]}")
+                        h = hg_hash
+                    elif hg_hash is None and is_git is None:
+                        # Conversion failed or hash not found in mappings
+                        # Could be Git hash that failed conversion, or Hg hash not in DB
+                        print(f"[{strftime('%H:%M:%S', localtime())}] [WARNING] Could not verify hash {original_hash[:12]} (Git→Hg conversion failed or not in mappings), storing original hash")
+                        h = original_hash
+                    else:
+                        # Fallback - use original
+                        if DEBUG_MODE:
+                            print(f"[DEBUG] Fallback: using original hash {original_hash[:12]}")
+                        h = original_hash
                 
                 # Add only if not already seen (avoid duplicates)
                 if h and h not in seen:
@@ -1001,9 +1053,10 @@ if __name__ == "__main__":
     
     # For single mode, specify the changeset hash
     # Example: changeset that was backed out (from web interface example)
-    # TEST_CHANGESET = "ce76fa05c90f3f24f8db09950eadd4a8cdec9088" # Test case: Backout changeset with Hg changeset hashes in description
-    # TEST_CHANGESET = "002359e80ee7f1e64555104fb9cb53b13cb10951" # Test case: Backout commit with Git commit hashes in description
-    TEST_CHANGESET = ""
+    # TEST_CHANGESET = "ce76fa05c90f3f24f8db09950eadd4a8cdec9088" # Test case: Backout changeset with Hg changeset hashes in description (https://hg-edge.mozilla.org/mozilla-central/rev/ce76fa05c90f3f24f8db09950eadd4a8cdec9088)
+    # TEST_CHANGESET = "0df381e9da8fa9bad1881075bbf25f2e5c0b413a" # Test case: regular (https://hg-edge.mozilla.org/mozilla-central/rev/0df381e9da8fa9bad1881075bbf25f2e5c0b413a)
+    # TEST_CHANGESET = "01064dcdd2abd69e53837af1b41d6d6a0c8ac30e" # Test case: Backout commit with Git commit hashes in description (https://hg-edge.mozilla.org/mozilla-central/rev/01064dcdd2abd69e53837af1b41d6d6a0c8ac30e)
+    TEST_CHANGESET = "d9aeb2853320191a95e7bf235dec5108266c37e0" # Test case: Two or more parent hashes (https://hg-edge.mozilla.org/mozilla-central/rev/d9aeb2853320191a95e7bf235dec5108266c37e0)
 
     # ===================================
     

@@ -252,29 +252,68 @@ def convert_hg_to_git(hg_hash):
         '''
         cursor.execute(query, hg_hash + '%')
         row = cursor.fetchone()
-        cursor.close()
-        conn.close()
         
         if row:
             git_hash = row[0]
             HG_TO_GIT_CACHE[hg_hash] = git_hash
-            print(f"[{strftime('%H:%M:%S', localtime())}] [INFO] Converted Hg {hg_hash[:12]} -> Git {git_hash[:7]} (from database)")
+            cursor.close()
+            conn.close()
+            if DEBUG_MODE:
+                print(f"[{strftime('%H:%M:%S', localtime())}] [DEBUG] Converted Hg {hg_hash[:12]} -> Git {git_hash[:7]} (from HgGit_Mappings)")
             return git_hash
         
-        # Fallback to Lando API
-        print(f"[{strftime('%H:%M:%S', localtime())}] [INFO] Hg hash {hg_hash[:12]} not in database, trying Lando API...")
-        api_url = f'https://lando.moz.tools/api/hg2git/firefox/{hg_hash}'
+        # HgGit_Mappings doesn't have it, try resolving full Hg hash from Changesets
+        full_hg_hash = hg_hash
+        if len(hg_hash) < 40:
+            query = '''
+                SELECT [Hash_Id]
+                FROM [dbo].[Changesets]
+                WHERE [Hash_Id] LIKE ?
+            '''
+            cursor.execute(query, hg_hash + '%')
+            row = cursor.fetchone()
+            if row:
+                full_hg_hash = row[0]
+                if DEBUG_MODE:
+                    print(f"[{strftime('%H:%M:%S', localtime())}] [DEBUG] Resolved short Hg {hg_hash[:12]} -> {full_hg_hash[:12]}... (from Changesets)")
+                
+                # Check HgGit_Mappings again with the full hash
+                query = '''
+                    SELECT [Git_Commit_ID]
+                    FROM [dbo].[HgGit_Mappings]
+                    WHERE [Hg_Changeset_ID] = ?
+                '''
+                cursor.execute(query, full_hg_hash)
+                row = cursor.fetchone()
+                if row:
+                    git_hash = row[0]
+                    HG_TO_GIT_CACHE[hg_hash] = git_hash
+                    HG_TO_GIT_CACHE[full_hg_hash] = git_hash
+                    cursor.close()
+                    conn.close()
+                    if DEBUG_MODE:
+                        print(f"[{strftime('%H:%M:%S', localtime())}] [DEBUG] Converted Hg {full_hg_hash[:12]} -> Git {git_hash[:7]} (from HgGit_Mappings with full hash)")
+                    return git_hash
+        
+        cursor.close()
+        conn.close()
+        
+        # Fallback to Lando API with full hash
+        print(f"[{strftime('%H:%M:%S', localtime())}] [INFO] Hg hash {full_hg_hash[:12]} not in HgGit_Mappings, trying Lando API...")
+        api_url = f'https://lando.moz.tools/api/hg2git/firefox/{full_hg_hash}'
         response = requests.get(api_url, timeout=10)
         
         if response.status_code == 200:
             data = response.json()
-            git_hash = data.get('git_commit_id')
+            git_hash = data.get('git_hash')  # API returns 'git_hash', not 'git_commit_id'
             if git_hash:
                 HG_TO_GIT_CACHE[hg_hash] = git_hash
-                print(f"[{strftime('%H:%M:%S', localtime())}] [INFO] Converted Hg {hg_hash[:12]} -> Git {git_hash[:7]} (from API)")
+                if full_hg_hash != hg_hash:
+                    HG_TO_GIT_CACHE[full_hg_hash] = git_hash  # Cache both short and full
+                print(f"[{strftime('%H:%M:%S', localtime())}] [INFO] Converted Hg {full_hg_hash[:12]} -> Git {git_hash[:7]} (from Lando API)")
                 return git_hash
         
-        print(f"[{strftime('%H:%M:%S', localtime())}] [WARNING] Could not convert Hg hash {hg_hash[:12]} to Git, keeping original")
+        print(f"[{strftime('%H:%M:%S', localtime())}] [WARNING] Could not convert Hg hash {full_hg_hash[:12]} to Git, keeping original")
         return hg_hash
         
     except Exception as e:
@@ -311,11 +350,48 @@ def is_likely_hg_hash(hash_str):
                 "SELECT COUNT(*) FROM [dbo].[HgGit_Mappings] WHERE [Hg_Changeset_ID] = ?",
                 hash_str
             )
+            is_hg_in_mappings = cursor.fetchone()[0] > 0
+            
+            if is_hg_in_mappings:
+                cursor.close()
+                conn.close()
+                return True
+            
+            # Check if it's in HgGit_Mappings as Git
+            cursor.execute(
+                "SELECT COUNT(*) FROM [dbo].[HgGit_Mappings] WHERE [Git_Commit_ID] = ?",
+                hash_str
+            )
+            is_git_in_mappings = cursor.fetchone()[0] > 0
+            
+            if is_git_in_mappings:
+                cursor.close()
+                conn.close()
+                return False
+            
+            # Not in HgGit_Mappings, fallback to Changesets table
+            cursor.execute(
+                "SELECT COUNT(*) FROM [dbo].[Changesets] WHERE [Hash_Id] = ?",
+                hash_str
+            )
             is_hg = cursor.fetchone()[0] > 0
+            
+            if is_hg:
+                cursor.close()
+                conn.close()
+                return True
+            
+            # Fallback to GitCommitList table
+            cursor.execute(
+                "SELECT COUNT(*) FROM [dbo].[GitCommitList] WHERE [Git_Commit_ID] = ?",
+                hash_str
+            )
+            is_git = cursor.fetchone()[0] > 0
+            
             cursor.close()
             conn.close()
             
-            return is_hg
+            return not is_git  # If it's Git, return False (not Hg)
         except:
             pass
     
@@ -355,6 +431,49 @@ def resolve_commit_hash(short_hash):
         full_hash = result.stdout.strip()
         if full_hash and len(full_hash) == 40:
             GIT_HASH_CACHE[short_hash] = full_hash
+            return full_hash
+    except Exception:
+        pass
+    
+    # Fallback to database queries
+    try:
+        conn = pyodbc.connect(CONN_STR)
+        cursor = conn.cursor()
+        
+        # Priority 1: Check HgGit_Mappings table
+        query = '''
+            SELECT [Git_Commit_ID]
+            FROM [dbo].[HgGit_Mappings]
+            WHERE [Git_Commit_ID] LIKE ?
+        '''
+        cursor.execute(query, short_hash + '%')
+        row = cursor.fetchone()
+        
+        if row:
+            full_hash = row[0]
+            GIT_HASH_CACHE[short_hash] = full_hash
+            cursor.close()
+            conn.close()
+            if DEBUG_MODE:
+                print(f"[{strftime('%H:%M:%S', localtime())}] [DEBUG] Resolved short Git {short_hash[:7]} -> {full_hash[:12]}... (from HgGit_Mappings)")
+            return full_hash
+        
+        # Fallback: Check GitCommitList table
+        query = '''
+            SELECT [Git_Commit_ID]
+            FROM [dbo].[GitCommitList]
+            WHERE [Git_Commit_ID] LIKE ?
+        '''
+        cursor.execute(query, short_hash + '%')
+        row = cursor.fetchone()
+        cursor.close()
+        conn.close()
+        
+        if row:
+            full_hash = row[0]
+            GIT_HASH_CACHE[short_hash] = full_hash
+            if DEBUG_MODE:
+                print(f"[{strftime('%H:%M:%S', localtime())}] [DEBUG] Resolved short Git {short_hash[:7]} -> {full_hash[:12]}... (from GitCommitList)")
             return full_hash
     except Exception:
         pass
@@ -562,9 +681,22 @@ def update_commit_in_db(commit_details, backed_out_by_list):
         full_backed_out_hashes = []  # Collect full hashes for later use
         if commit_details['backed_out_changesets']:
             for backed_out_hash in commit_details['backed_out_changesets']:
+                original_hash = backed_out_hash
+                
                 # Check if this is an Hg hash and convert to Git
                 if is_likely_hg_hash(backed_out_hash):
                     backed_out_hash = convert_hg_to_git(backed_out_hash)
+                    
+                    # Check if conversion failed (returned same hash)
+                    if backed_out_hash == original_hash:
+                        print(f"  [{strftime('%H:%M:%S', localtime())}] [WARNING] Could not convert Hg hash {original_hash[:12]} to Git, storing original Hg hash")
+                        # Store the original Hg hash as-is
+                        cursor.execute(INSERT_PROPERTY_QUERY,
+                                     hash_id,
+                                     'Backout Commit',
+                                     original_hash)
+                        # Don't add to full_backed_out_hashes since we can't update it in GitCommitList
+                        continue
                 
                 # Resolve short Git hash to full 40-char hash
                 full_backed_out_hash = resolve_commit_hash(backed_out_hash)
@@ -828,8 +960,9 @@ if __name__ == "__main__":
     
     # For single mode, specify the commit hash
     # Example: a known backout commit for testing
-    TEST_COMMIT = "55b2aa39f52c75f74351f056ec1c2e76bf5a88d9"  # Revert commits (https://hg-edge.mozilla.org/mozilla-central/rev/01064dcdd2abd69e53837af1b41d6d6a0c8ac30e)
-    # TEST_COMMIT = "a929f957f0e89b88bfc47ab9024224b4765443fb" # Backout changeset (https://hg-edge.mozilla.org/mozilla-central/rev/ce76fa05c90f3f24f8db09950eadd4a8cdec9088)
+    # TEST_COMMIT = "a929f957f0e89b88bfc47ab9024224b4765443fb" # Test case: Backout changeset with Hg changeset hashes in description (https://hg-edge.mozilla.org/mozilla-central/rev/ce76fa05c90f3f24f8db09950eadd4a8cdec9088)
+    # TEST_COMMIT = "becded629c7a6ae23a793035bc7d35eeb267f0a3" # Test case: regular (https://hg-edge.mozilla.org/mozilla-central/rev/0df381e9da8fa9bad1881075bbf25f2e5c0b413a)
+    TEST_COMMIT = "55b2aa39f52c75f74351f056ec1c2e76bf5a88d9" # Test case: Backout commit with Git commit hashes in description (https://hg-edge.mozilla.org/mozilla-central/rev/01064dcdd2abd69e53837af1b41d6d6a0c8ac30e)
     # ===================================
     
     if MODE == "all":

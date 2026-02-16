@@ -432,9 +432,16 @@ Bug 123456, Bug 234567, Bug 345678
 [Bug 999000] Critical fix
 Bug 12345 r=reviewer
 
+
+If you can to clear all progress to start running this script over, then run this queries:
+```
+update changesets set is_merge=null, backed_out=null, is_backout_changeset=null, [Description]=null
+delete from Changeset_Properties;
+```
+
 ------------------------------------------------------------------------
 
-**) Transfer data:
+**) TODO Transfer data:
 	- From: [Changesets] and [Changeset_Properties]
 	- To: [GitCommitList] and [GitCommit_Properties]
 	
@@ -444,19 +451,21 @@ Bug 12345 r=reviewer
 Requirement:
 	- Git firefox project has been downloaded in local machine.
 	- HgGitMapper.py has been completed
+	
+This script filled columns in table [GitCommitList]:
+	- backed_out, is_backout_commit, Description (`is_merge` has been filled)
+This script also save the following properties in table [GitCommit_Properties]:
+	- Backout Commit, Backed Out By, Bug ID Mentioned (the properties 'Parent ID' has already been filled AND 'Child ID' isn't available in Git Commit)
+
+If you can to clear all progress to start running this script over, then run this queries:
+```
+update GitCommitList set backed_out=null, is_backout_commit=null, [Description]=null
+delete from GitCommit_Properties where [Name] <> 'Parent ID';
+```
 
 ------------------------------------------------------------------------
 
 
-**) Run `HgChangesetsDetailsExtractor.py` to extract detailed information of each changesets
-Requirement:
-	- Mercurial firefox project has been downloaded in local machine.
-	- HgGitMapper.py has been completed (Optional but strongly recommended)
-
-This script filled columns in table [Changesets]:
-	- is_merge, backed_out, is_backout_changeset, Description
-This script also save the following properties in table [Changeset_Properties]:
-	- Parent Changeset, Child Changeset, Backout Changeset, Backed Out By, Bug ID Mentioned
 
 ------------------------------------------------------------------------
 
