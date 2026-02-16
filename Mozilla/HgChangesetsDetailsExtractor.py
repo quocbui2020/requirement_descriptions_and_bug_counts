@@ -70,6 +70,9 @@ PROGRESS_FREQUENCY = 10
 # Use Mercurial search for more accurate backout detection (slower)
 # Set to False for faster processing, relies on commit message parsing only
 USE_HG_SEARCH_FOR_BACKOUTS = False
+
+# Debug mode - set to False to reduce log verbosity (only show progress/timing)
+DEBUG_MODE = True
 # ====================================
 
 # Cache for resolving revision numbers to hashes
@@ -152,18 +155,21 @@ def resolve_git_to_hg(git_commit_id):
         if not git_hash or len(git_hash) < 40:
             return None
         
-        print(f"[DEBUG] resolve_git_to_hg called for: {git_hash[:12]}...")
+        if DEBUG_MODE:
+            print(f"[DEBUG] resolve_git_to_hg called for: {git_hash[:12]}...")
         
         # Check cache first
         if git_hash in GIT_TO_HG_CACHE:
-            print(f"[DEBUG] Found in cache: {GIT_TO_HG_CACHE[git_hash][:12]}")
+            if DEBUG_MODE:
+                print(f"[DEBUG] Found in cache: {GIT_TO_HG_CACHE[git_hash][:12]}")
             return GIT_TO_HG_CACHE[git_hash]
         
         # Query database
         conn = pyodbc.connect(CONN_STR)
         cursor = conn.cursor()
         
-        print(f"[DEBUG] Querying database for Git hash: {git_hash[:12]}...")
+        if DEBUG_MODE:
+            print(f"[DEBUG] Querying database for Git hash: {git_hash[:12]}...")
         query = '''
             SELECT [Hg_Changeset_ID]
             FROM [dbo].[HgGit_Mappings]
@@ -176,12 +182,14 @@ def resolve_git_to_hg(git_commit_id):
         
         if row:
             hg_hash = row[0]
-            print(f"[DEBUG] Found in database: {hg_hash[:12]}")
+            if DEBUG_MODE:
+                print(f"[DEBUG] Found in database: {hg_hash[:12]}")
             GIT_TO_HG_CACHE[git_hash] = hg_hash
             HG_TO_GIT_CACHE[hg_hash] = git_hash
             return hg_hash
         
-        print(f"[DEBUG] Not in database, calling Lando API...")
+        if DEBUG_MODE:
+            print(f"[DEBUG] Not in database, calling Lando API...")
         # Fallback to Lando API
         try:
             url = f'https://lando.moz.tools/api/git2hg/firefox/{git_hash}'
@@ -192,16 +200,16 @@ def resolve_git_to_hg(git_commit_id):
                 if hg_hash:
                     GIT_TO_HG_CACHE[git_hash] = hg_hash
                     HG_TO_GIT_CACHE[hg_hash] = git_hash
-                    print(f"[Lando API] Git {git_hash[:12]} -> Hg {hg_hash[:12]}")
+                    print(f"[{strftime('%H:%M:%S', localtime())}] [Lando API] Git {git_hash[:12]} -> Hg {hg_hash[:12]}")
                     sleep(0.1)  # Rate limiting
                     return hg_hash
         except Exception as e:
-            print(f"\n[WARNING] Lando API failed for {git_hash[:12]}: {e}")
+            print(f"\n[{strftime('%H:%M:%S', localtime())}] [WARNING] Lando API failed for {git_hash[:12]}: {e}")
         
         return None
         
     except Exception as e:
-        print(f"\n[WARNING] Error resolving Git to Hg for {git_commit_id[:12]}: {e}")
+        print(f"\n[{strftime('%H:%M:%S', localtime())}] [WARNING] Error resolving Git to Hg for {git_commit_id[:12]}: {e}")
         return None
 
 def identify_and_convert_hash(hash_id):
@@ -319,10 +327,12 @@ def get_changeset_details(hash_id):
         # Use unusual delimiter to avoid issues with descriptions containing |||
         template_parts = "{node}<<<DELIM>>>{p1node}<<<DELIM>>>{p2node}<<<DELIM>>>{extras}<<<DELIM>>>{desc}"
         cmd = ['hg', 'log', '-r', hash_id, '--template', template_parts, '--cwd', REPO_PATH]
-        print(f"Executing: {' '.join(cmd)}")
+        if DEBUG_MODE:
+            print(f"Executing: {' '.join(cmd)}")
         result = subprocess.run(cmd, capture_output=True, text=True, timeout=30, check=True)
-        print(f"Raw output: {repr(result.stdout)}")  # Add this line
-        print(f"Split parts: {result.stdout.strip().split('<<<DELIM>>>')}")  # See the split result
+        if DEBUG_MODE:
+            print(f"Raw output: {repr(result.stdout)}")
+            print(f"Split parts: {result.stdout.strip().split('<<<DELIM>>>')}")
         
         if not result.stdout.strip():
             return None
@@ -381,28 +391,29 @@ def get_changeset_details(hash_id):
         is_backout_from_desc = False
         
         # Enhanced backout patterns - more comprehensive
+        # IMPORTANT: Use (?=.*[a-f]) to require at least one letter to avoid matching pure numeric bug IDs
         backout_patterns = [
             # Standard patterns with "changeset"
-            r'[Bb]acked?\s+out\s+changeset\s+([0-9a-f]{12,40})',
-            r'[Bb]ack(?:ing)?\s+out\s+changeset\s+([0-9a-f]{12,40})',
-            r'[Bb]ackout\s+changeset\s+([0-9a-f]{12,40})',
+            r'[Bb]acked?\s+out\s+changeset\s+((?=.*[a-f])[0-9a-f]{12,40})',
+            r'[Bb]ack(?:ing)?\s+out\s+changeset\s+((?=.*[a-f])[0-9a-f]{12,40})',
+            r'[Bb]ackout\s+changeset\s+((?=.*[a-f])[0-9a-f]{12,40})',
             
             # Patterns without "changeset" but with clear context
-            r'[Bb]acked?\s+out\s+(?:rev\s+)?([0-9a-f]{12,40})',
-            r'[Bb]ackout(?:\s+of)?\s+([0-9a-f]{12,40})',
-            r'[Bb]acking\s+out\s+([0-9a-f]{12,40})',
+            r'[Bb]acked?\s+out\s+(?:rev\s+)?((?=.*[a-f])[0-9a-f]{12,40})',
+            r'[Bb]ackout(?:\s+of)?\s+((?=.*[a-f])[0-9a-f]{12,40})',
+            r'[Bb]acking\s+out\s+((?=.*[a-f])[0-9a-f]{12,40})',
             
             # Multiple changesets
-            r'[Bb]acked?\s+out\s+\d+\s+changesets.*?([0-9a-f]{12,40})',
+            r'[Bb]acked?\s+out\s+\d+\s+changesets.*?((?=.*[a-f])[0-9a-f]{12,40})',
             
             # Rev number style
-            r'[Bb]ackout\s+rev\s+([0-9a-f]{12,40})',
+            r'[Bb]ackout\s+rev\s+((?=.*[a-f])[0-9a-f]{12,40})',
             
             # Git-style revert patterns (GitHub workflow) - flexible with/without "commit"
-            r'[Rr]everts?\s+commit\s+version\s+([0-9a-f]{40})',
-            r'[Rr]everts?\s+(?:commit\s+)?([0-9a-f]{40})',
-            r'[Tt]his\s+reverts\s+(?:commit\s+)?([0-9a-f]{40})',
-            r'[Rr]evert(?:ed|ing)?\s+([0-9a-f]{40})',
+            r'[Rr]everts?\s+commit\s+version\s+((?=.*[a-f])[0-9a-f]{40})',
+            r'[Rr]everts?\s+(?:commit\s+)?((?=.*[a-f])[0-9a-f]{40})',
+            r'[Tt]his\s+reverts\s+(?:commit\s+)?((?=.*[a-f])[0-9a-f]{40})',
+            r'[Rr]evert(?:ed|ing)?\s+((?=.*[a-f])[0-9a-f]{40})',
         ]
 
         # Patterns for revision numbers (not hashes)
@@ -450,9 +461,18 @@ def get_changeset_details(hash_id):
 
         # Combine results from extras and description
         is_backout = is_backout_from_extras or is_backout_from_desc
-        all_backed_out = backed_out_from_extras + backed_out_hashes + resolved_from_revs
         
-        print(f"[DEBUG] is_backout: {is_backout}, all_backed_out raw: {all_backed_out}")
+        # Filter out pure numeric bug IDs from backed_out_hashes before combining
+        # Real hashes must contain at least one letter (a-f)
+        filtered_backed_out_hashes = [
+            h for h in backed_out_hashes 
+            if any(c in 'abcdef' for c in h.lower())
+        ]
+        
+        all_backed_out = backed_out_from_extras + filtered_backed_out_hashes + resolved_from_revs
+        
+        if DEBUG_MODE:
+            print(f"[DEBUG] is_backout: {is_backout}, all_backed_out raw: {all_backed_out}")
         
         # Remove duplicates and invalid hashes
         # Normalize all hashes to full 40-char format to avoid redundancy
@@ -475,13 +495,16 @@ def get_changeset_details(hash_id):
                 
                 # Now that we have a full 40-char hash, validate if it's Git or Hg
                 if h and len(h) == 40:
-                    print(f"[DEBUG] Validating hash: {h[:12]}...")
+                    if DEBUG_MODE:
+                        print(f"[DEBUG] Validating hash: {h[:12]}...")
                     hg_hash, is_git = identify_and_convert_hash(h)
                     if is_git and hg_hash:
-                        print(f"[Git->Hg] {h[:12]} -> {hg_hash[:12]}")
+                        if DEBUG_MODE:
+                            print(f"[Git->Hg] {h[:12]} -> {hg_hash[:12]}")
                         h = hg_hash
                     else:
-                        print(f"[DEBUG] Hash is Hg (or already normalized): {h[:12]}")
+                        if DEBUG_MODE:
+                            print(f"[DEBUG] Hash is Hg (or already normalized): {h[:12]}")
                         h = hg_hash if hg_hash else h
                 
                 # Add only if not already seen (avoid duplicates)
@@ -489,7 +512,8 @@ def get_changeset_details(hash_id):
                     unique_backed_out.append(h)
                     seen.add(h)
         
-        print(f"[DEBUG] Final unique_backed_out: {unique_backed_out}")
+        if DEBUG_MODE:
+            print(f"[DEBUG] Final unique_backed_out: {unique_backed_out}")
         
         # Extract bug IDs from description by regex
         bug_ids = []
@@ -497,7 +521,8 @@ def get_changeset_details(hash_id):
         bug_matches = re.findall(bug_id_pattern, description)
         if bug_matches:
             bug_ids = list(set(bug_matches))  # Remove duplicates
-            print(f"[DEBUG] Found bug IDs: {bug_ids}")
+            if DEBUG_MODE:
+                print(f"[DEBUG] Found bug IDs: {bug_ids}")
         
         return {
             'hash_id': node,
@@ -512,13 +537,13 @@ def get_changeset_details(hash_id):
         }
         
     except subprocess.TimeoutExpired:
-        print(f"[WARNING] Timeout getting details for {hash_id}")
+        print(f"[{strftime('%H:%M:%S', localtime())}] [WARNING] Timeout getting details for {hash_id}")
         return None
     except subprocess.CalledProcessError as e:
-        print(f"[WARNING] Error getting details for {hash_id}: {e.stderr}")
+        print(f"[{strftime('%H:%M:%S', localtime())}] [WARNING] Error getting details for {hash_id}: {e.stderr}")
         return None
     except Exception as e:
-        print(f"[WARNING] Unexpected error for {hash_id}: {e}")
+        print(f"[{strftime('%H:%M:%S', localtime())}] [WARNING] Unexpected error for {hash_id}: {e}")
         import traceback
         traceback.print_exc()
         return None
@@ -637,7 +662,7 @@ def update_backed_out_changesets_in_db(backout_changeset_hash, backed_out_hashes
                 updated_count += 1
                 
             except Exception as e:
-                print(f"\n[WARNING] Failed to update backed-out changeset {backed_out_hash}: {e}")
+                print(f"\n[{strftime('%H:%M:%S', localtime())}] [WARNING] Failed to update backed-out changeset {backed_out_hash}: {e}")
                 continue
         
         conn.commit()
@@ -647,7 +672,7 @@ def update_backed_out_changesets_in_db(backout_changeset_hash, backed_out_hashes
         return updated_count
         
     except Exception as e:
-        print(f"\n[ERROR] Database error in update_backed_out_changesets_in_db: {e}")
+        print(f"\n[{strftime('%H:%M:%S', localtime())}] [ERROR] Database error in update_backed_out_changesets_in_db: {e}")
         try:
             conn.rollback()
             cursor.close()
@@ -719,7 +744,7 @@ def update_changeset_in_db(changeset_details, backed_out_by_list):
         return True
         
     except Exception as e:
-        print(f"[ERROR] Failed to update {hash_id}: {e}")
+        print(f"[{strftime('%H:%M:%S', localtime())}] [ERROR] Failed to update {hash_id}: {e}")
         try:
             conn.rollback()
             cursor.close()
@@ -749,35 +774,38 @@ def get_changesets_from_db():
         return changesets
         
     except Exception as e:
-        print(f"[ERROR] Failed to get changesets from database: {e}")
+        print(f"[{strftime('%H:%M:%S', localtime())}] [ERROR] Failed to get changesets from database: {e}")
         return []
 
 
 def process_all_changesets():
     """
     Process all changesets from the database and extract detailed information.
-    Uses incremental batch processing to handle large datasets (800K+ changesets).
+    Uses on-demand batch queries for crash recovery and lower memory usage.
     """
     print("=" * 80)
-    print("CHANGESET DETAILS EXTRACTOR - LOCAL MERCURIAL VERSION (BATCH MODE)")
+    print(f"[{strftime('%H:%M:%S', localtime())}] CHANGESET DETAILS EXTRACTOR - LOCAL MERCURIAL VERSION (BATCH MODE)")
     print("=" * 80)
-    print(f"Repository:       {REPO_PATH}")
-    print(f"Batch size:       {BATCH_SIZE} (commits to DB after each batch)")
-    print(f"Progress updates: Every {PROGRESS_FREQUENCY} changesets")
-    print(f"Start time:       {strftime('%Y-%m-%d %H:%M:%S', localtime())}")
+    print(f"[{strftime('%H:%M:%S', localtime())}] Repository:       {REPO_PATH}")
+    print(f"[{strftime('%H:%M:%S', localtime())}] Batch size:       {BATCH_SIZE} (commits to DB after each batch)")
+    print(f"[{strftime('%H:%M:%S', localtime())}] Progress updates: Every {PROGRESS_FREQUENCY} changesets")
+    print(f"[{strftime('%H:%M:%S', localtime())}] Start time:       {strftime('%Y-%m-%d %H:%M:%S', localtime())}")
     print("=" * 80)
     
-    # Get all changesets from database that haven't been processed
-    print("\n[LOADING] Getting unprocessed changesets from database...")
-    changesets = get_changesets_from_db()
+    # Count total changesets to process
+    print(f"\n[{strftime('%H:%M:%S', localtime())}] [STEP 1/3] Counting changesets to process...")
+    all_changesets = get_changesets_from_db()
     
-    if not changesets:
-        print("[INFO] No unprocessed changesets found (all have Description populated)")
+    if not all_changesets:
+        print(f"[{strftime('%H:%M:%S', localtime())}] [INFO] No unprocessed changesets found (all have Description populated)")
         return
     
-    print(f"[INFO] Found {len(changesets):,} changesets to process")
-    print(f"[INFO] Estimated time: {len(changesets) * 3 / 3600:.1f} - {len(changesets) * 5 / 3600:.1f} hours")
-    print(f"[INFO] Processing in batches of {BATCH_SIZE}, committing to DB incrementally\n")
+    total_changesets = len(all_changesets)
+    print(f"[{strftime('%H:%M:%S', localtime())}] [INFO] Found {total_changesets:,} changesets to process")
+    print(f"[{strftime('%H:%M:%S', localtime())}] [INFO] Estimated time: {total_changesets * 3 / 3600:.1f} - {total_changesets * 5 / 3600:.1f} hours")
+    
+    # Process in batches with on-demand queries
+    print(f"\n[{strftime('%H:%M:%S', localtime())}] [STEP 2/3] Processing in batches of {BATCH_SIZE} (saves to database after each batch)...")
     
     # Batch tracking
     backout_map_global = {}  # Track backout relationships across all batches
@@ -789,15 +817,21 @@ def process_all_changesets():
     total_backed_out_updates = 0
     batch_num = 0
     
-    # Process in batches
-    for batch_start in range(0, len(changesets), BATCH_SIZE):
-        batch_end = min(batch_start + BATCH_SIZE, len(changesets))
-        batch = changesets[batch_start:batch_end]
+    # Process by repeatedly querying for unprocessed changesets
+    while True:
+        # Get next batch of unprocessed changesets
+        batch = get_changesets_from_db()
+        
+        if not batch:
+            print(f"[{strftime('%H:%M:%S', localtime())}] [INFO] No more changesets to process")
+            break
+        
+        # Limit to BATCH_SIZE
+        batch = batch[:BATCH_SIZE]
         batch_num += 1
         
         print(f"\n{'=' * 80}")
-        print(f"[BATCH {batch_num}] Processing {batch_start + 1}-{batch_end} of {len(changesets):,}")
-        print(f"[{strftime('%H:%M:%S', localtime())}] Started batch {batch_num}")
+        print(f"[{strftime('%H:%M:%S', localtime())}] [BATCH {batch_num}] Processing {len(batch)} changesets...")
         print(f"{'=' * 80}")
         
         batch_details = {}
@@ -807,11 +841,9 @@ def process_all_changesets():
         
         # Extract details for this batch
         for idx, hash_id in enumerate(batch, 1):
-            global_idx = batch_start + idx
             
             if idx % PROGRESS_FREQUENCY == 0 or idx == 1:
-                print(f"  [{strftime('%H:%M:%S', localtime())}] Extracting {idx}/{len(batch)} "
-                      f"(Global: {global_idx:,}/{len(changesets):,}) - "
+                print(f"  [{strftime('%H:%M:%S', localtime())}] Extracting {idx}/{len(batch)} - "
                       f"OK: {batch_processed}, Failed: {batch_failed}",
                       end='\r', flush=True)
             
@@ -839,7 +871,7 @@ def process_all_changesets():
         
         # Update database for this batch
         if batch_details:
-            print(f"  [DB UPDATE] Committing {len(batch_details)} changesets to database...")
+            print(f"  [{strftime('%H:%M:%S', localtime())}] [DB UPDATE] Committing {len(batch_details)} changesets to database...")
             
             batch_updated = 0
             batch_update_failed = 0
@@ -862,38 +894,34 @@ def process_all_changesets():
                 else:
                     batch_update_failed += 1
             
-            print(f"  [BATCH {batch_num} COMPLETE] Updated: {batch_updated}, "
-                  f"Failed: {batch_update_failed}, Backout links: {batch_backed_out_updates}")
+            print(f"  [{strftime('%H:%M:%S', localtime())}] [BATCH {batch_num}] Complete: {batch_updated} changesets saved ({total_updated + batch_updated}/{total_changesets} total)")
             
             # Update totals
             total_processed += batch_processed
             total_failed += batch_failed
             total_updated += batch_updated
             total_backed_out_updates += batch_backed_out_updates
-            
-            # Progress summary
-            pct_complete = (batch_end / len(changesets)) * 100
-            print(f"  [OVERALL PROGRESS] {batch_end:,}/{len(changesets):,} ({pct_complete:.1f}%) - "
-                  f"Processed: {total_processed:,}, Updated: {total_updated:,}")
         
         # Clear batch details from memory
         batch_details.clear()
+        
+        # Safety check: if batch size was less than BATCH_SIZE, we're done
+        if len(batch) < BATCH_SIZE:
+            break
     
     # Final summary
-    print("\n" + "=" * 80)
+    print(f"\n[{strftime('%H:%M:%S', localtime())}] [STEP 3/3] Final Summary")
+    print("=" * 80)
     print("EXTRACTION SUMMARY")
     print("=" * 80)
-    print(f"Total changesets:              {len(changesets):,}")
+    print(f"Total changesets:              {total_changesets:,}")
     print(f"Details extracted:             {total_processed:,}")
     print(f"Extraction failed:             {total_failed:,}")
     print(f"Database updates successful:   {total_updated:,}")
     print(f"Backout relationships found:   {len(backout_map_global):,}")
     print(f"Backed-out changesets updated: {total_backed_out_updates:,}")
-    print(f"Batches processed:             {batch_num}")
+    print(f"Total batches:                 {batch_num}")
     print(f"End time:                      {strftime('%Y-%m-%d %H:%M:%S', localtime())}")
-    print("=" * 80)
-    print("\n[SUCCESS] All batches committed to database.")
-    print("[INFO] You can re-run this script anytime - it will skip already processed changesets.")
     print("=" * 80)
 
 
@@ -910,7 +938,7 @@ def process_single_changeset(hash_id):
     details = get_changeset_details(hash_id)
     
     if not details:
-        print("[ERROR] Failed to get changeset details")
+        print(f"[{strftime('%H:%M:%S', localtime())}] [ERROR] Failed to get changeset details")
         return
     
     print(f"Hash ID:              {details['hash_id']}")
@@ -947,19 +975,19 @@ def process_single_changeset(hash_id):
             print(f"  - {backout_hash}")
     
     # Update database
-    print("\nUpdating database...")
+    print(f"\n[{strftime('%H:%M:%S', localtime())}] Updating database...")
     success = update_changeset_in_db(details, backed_out_by)
     
     if success:
-        print("[SUCCESS] Database updated")
+        print(f"[{strftime('%H:%M:%S', localtime())}] [SUCCESS] Database updated")
         
         # If this is a backout changeset, also update the changesets it backed out
         if details['is_backout_changeset'] and details['backed_out_changesets']:
-            print(f"\nUpdating {len(details['backed_out_changesets'])} backed-out changesets...")
+            print(f"\n[{strftime('%H:%M:%S', localtime())}] Updating {len(details['backed_out_changesets'])} backed-out changesets...")
             count = update_backed_out_changesets_in_db(hash_id, details['backed_out_changesets'])
-            print(f"[SUCCESS] Updated {count} backed-out changesets")
+            print(f"[{strftime('%H:%M:%S', localtime())}] [SUCCESS] Updated {count} backed-out changesets")
     else:
-        print("[ERROR] Database update failed")
+        print(f"[{strftime('%H:%M:%S', localtime())}] [ERROR] Database update failed")
 
 
 if __name__ == "__main__":
@@ -967,6 +995,9 @@ if __name__ == "__main__":
     
     # MODE: "all" to process all changesets, "single" to test one changeset
     MODE = "all"  # "all" or "single"
+    
+    # Debug mode - set to False to reduce log verbosity (only show progress/timing)
+    DEBUG_MODE = False
     
     # For single mode, specify the changeset hash
     # Example: changeset that was backed out (from web interface example)
@@ -981,8 +1012,8 @@ if __name__ == "__main__":
     elif MODE == "single":
         process_single_changeset(TEST_CHANGESET)
     else:
-        print(f"[ERROR] Invalid MODE: {MODE}")
-        print("Valid modes: 'all' or 'single'")
+        print(f"[{strftime('%H:%M:%S', localtime())}] [ERROR] Invalid MODE: {MODE}")
+        print(f"[{strftime('%H:%M:%S', localtime())}] Valid modes: 'all' or 'single'")
         sys.exit(1)
     
-    print("\nScript completed. Exiting.")
+    print(f"\n[{strftime('%H:%M:%S', localtime())}] Script completed. Exiting.")

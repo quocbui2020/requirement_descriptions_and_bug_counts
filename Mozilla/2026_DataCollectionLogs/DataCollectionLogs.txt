@@ -402,7 +402,7 @@ hg log -r {specific Hg Hash ID} --debug --cwd C:\Users\quocb\quocbui\Studies\res
 
 Regex to catch Bug ID and Backout/revert changesets (You can test it in https://regex101.com/):
 
-[Bb]acked?\s+out\s+(?:changeset|change set|commit|revision)s?\s+([a-f0-9]{7,40})|[Bb]ack(?:ing)?\s+out\s+(?:changeset|change set|commit|revision)s?\s+([a-f0-9]{7,40})|[Bb]ackout\s+(?:changeset|change set|commit|revision)?\s*([a-f0-9]{7,40})|[Rr]evert\s+(?:changeset|change set|commit|revision)?\s+([a-f0-9]{7,40})|[Rr]evert\s+".*".*\s+([a-f0-9]{7,40})|[Bb]acked?\s+out\s+([a-f0-9]{7,40})|[Bb]ack(?:ing)?\s+out\s+([a-f0-9]{7,40})|[Bb]ackout\s+([a-f0-9]{7,40})|[Rr]everts?\s+(?:commit\s+)?([a-f0-9]{40})|[Tt]his\s+reverts\s+(?:commit\s+)?([a-f0-9]{40})|[Rr]evert(?:ed|ing)?\s+([a-f0-9]{40})|[Bb]ug\s+([0-9]+)
+[Bb]acked?\s+out\s+(?:changeset|change set|commit|revision)s?\s+([a-f0-9]{7,40})|[Bb]ack(?:ing)?\s+out\s+(?:changeset|change set|commit|revision)s?\s+([a-f0-9]{7,40})|[Bb]ackout\s+(?:changeset|change set|commit|revision)?\s*([a-f0-9]{7,40})|[Rr]evert\s+(?:changeset|change set|commit|revision)?\s+([a-f0-9]{7,40})|[Rr]evert\s+".*".*\s+([a-f0-9]{7,40})|[Bb]acked?\s+out\s+([a-f0-9]{7,40})|[Bb]ack(?:ing)?\s+out\s+([a-f0-9]{7,40})|[Bb]ackout\s+([a-f0-9]{7,40})|[Rr]everts?\s+(?:commit\s+)?([a-f0-9]{40})|[Tt]his\s+reverts\s+(?:commit\s+)?([a-f0-9]{40})|[Rr]evert(?:ed|ing)?\s+([a-f0-9]{40})|[Rr]everts?\s+commit\s+version\s+([0-9a-f]{40})|[Bb]ug\s+([0-9]+)
 
 Test String:
 
@@ -482,6 +482,31 @@ TODO: Update the HgGitMapper.py so that it will go through `GitCommitList` to co
 
 
 
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 /*
 cls; python .\Mozilla\HgGitMapper.py 06b66a7cf2e14c0c1b0f9099301e5c41e8e0c52f 7155e69bc42c3613901dd356371e5529bf85e855
 cls; python .\Mozilla\HgGitMapper.py 7155ef05668dd63d1b97fe6c9c7e3eb517c9acb3 8123a477b7d7c99c9f62e4fd8dc3896da4624e42
@@ -514,3 +539,38 @@ where is_merge is not null
 	or is_backout_changeset is not null
 */
 
+
+
+
+/* -------------------------------------- */
+/* -------------------------------------- */
+/* -------------------------------------- */
+/* KEEP TRACK OF `GitCommitsDetailsExtractor.py */
+
+/*
+update GitCommitList
+	set backed_out=null, is_backout_commit=null, [Description]=null
+where [Description] is not null
+	or backed_out is not null
+	or is_backout_commit is not null;
+
+delete from GitCommit_Properties where [Name] <> 'Parent ID';
+--*/
+
+select top 100 * from dbo.GitCommitList
+where [Description] is not null
+	or backed_out is not null
+	or is_backout_commit is not null;
+
+select top 100 *
+from GitCommit_Properties
+where Name <> 'Parent ID'
+
+select *
+from HgGit_Mappings
+where Git_Commit_ID like '09785dc4c5aa%'
+	or Hg_Changeset_ID like '09785dc4c5aa%'
+
+select top 100 *
+from dbo.GitCommitList
+where Git_Commit_ID='dd3b59eb2918683a3780fb9c57c423350277482d'
