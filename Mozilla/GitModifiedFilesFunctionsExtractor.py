@@ -109,6 +109,14 @@ Single commit with regex fallback:
     python GitModifiedFilesFunctionsExtractor.py --table-number 4 --repo-path C:\path\to\firefox_worker_04 \
             --single-commit-id 0006c9b86c7c307de509cf383f29cec3d6f0e3e8 --enable-regex-function-fallback
 
+Range mode with per-file changed_methods timeout (recommended for hang-prone files):
+    python GitModifiedFilesFunctionsExtractor.py --table-number 4 --repo-path C:\path\to\firefox_worker_04 \
+            --commit-file-extract-timeout-seconds 120 \
+            265c42d16f47111316f6a79e5308a0d6ac5d9f71 334746cbcbd83d2bea6bf70ba1227f5a096182ad
+
+Alias for typo-tolerant flag name:
+    --commit-fie-extract-timeout-seconds 120
+
 Range mode:
     python GitModifiedFilesFunctionsExtractor.py --table-number 4 --repo-path C:\path\to\firefox_worker_04 \
             265c42d16f47111316f6a79e5308a0d6ac5d9f71 334746cbcbd83d2bea6bf70ba1227f5a096182ad
@@ -125,18 +133,29 @@ OPERATIONAL NOTES
 - During extraction, the script prints a live in-place status line:
     Process Git_Commit_ID: <hash>
   This line is overwritten as each commit changes (instead of appending a new line).
+- While iterating files inside a commit, live status includes file path:
+        Process Git_Commit_ID: <hash> - File: <path>
+    This line is also overwritten in-place and truncated to terminal width.
 - A periodic summary is still emitted every PROGRESS_LOG_INTERVAL commits, including
     batch position and a progress bar.
 - Commit extraction intentionally uses a fresh PyDriller repository traversal per
     commit (Repository(..., single=<hash>).traverse_commits()) for safer behavior
     in multi-process scenarios sharing the same .git directory.
+- Per-file timeout safety:
+        --commit-file-extract-timeout-seconds <seconds>
+    If changed_methods extraction for one file exceeds timeout, only that file's
+    function extraction is skipped; the same commit and remaining files continue.
+    Use 0 to disable timeout behavior.
 - If SQL reports truncation (for example Function_Arguments too long), increase
     column size in DB schema or add truncation policy in code.
 """
 
 import argparse
+import multiprocessing
 import os
+import queue
 import re
+import shutil
 import sys
 import time
 from time import localtime, sleep, strftime
@@ -170,6 +189,7 @@ RETRY_HEARTBEAT_INTERVAL_SECONDS = 30
 PROGRESS_LOG_INTERVAL = 5
 PROGRESS_BAR_WIDTH = 24
 LIVE_COMMIT_STATUS_PREFIX = "Process Git_Commit_ID: "
+DEFAULT_COMMIT_FILE_EXTRACT_TIMEOUT_SECONDS = 0.0
 
 # VS Code breakpoint-friendly run mode:
 # - False: use normal command-line arguments
@@ -194,6 +214,7 @@ SOURCE_COMMITS_CACHE = []
 SOURCE_COMMITS_CACHE_SET = set()
 ENABLE_REGEX_FUNCTION_FALLBACK = False
 LIVE_COMMIT_STATUS_LAST_LENGTH = 0
+COMMIT_FILE_EXTRACT_TIMEOUT_SECONDS = DEFAULT_COMMIT_FILE_EXTRACT_TIMEOUT_SECONDS
 
 GET_COMMITS_ALL_QUERY = None
 GET_COMMITS_RANGE_QUERY = None
@@ -235,12 +256,46 @@ def print_progress_bar(phase, current, total, indent="  "):
 def print_live_commit_status(commit_hash):
     global LIVE_COMMIT_STATUS_LAST_LENGTH
 
-    message = f"{LIVE_COMMIT_STATUS_PREFIX}{commit_hash}"
+    message = _truncate_live_status_message(f"{LIVE_COMMIT_STATUS_PREFIX}{commit_hash}")
     if LIVE_COMMIT_STATUS_LAST_LENGTH > len(message):
         message += " " * (LIVE_COMMIT_STATUS_LAST_LENGTH - len(message))
 
     print(f"\r{message}", end="", flush=True)
     LIVE_COMMIT_STATUS_LAST_LENGTH = len(message)
+
+
+def print_live_commit_file_status(commit_hash, file_path):
+    global LIVE_COMMIT_STATUS_LAST_LENGTH
+
+    safe_file_path = file_path or "<unknown>"
+    message = _truncate_live_status_message(
+        f"{LIVE_COMMIT_STATUS_PREFIX}{commit_hash} - File: {safe_file_path}"
+    )
+    if LIVE_COMMIT_STATUS_LAST_LENGTH > len(message):
+        message += " " * (LIVE_COMMIT_STATUS_LAST_LENGTH - len(message))
+
+    print(f"\r{message}", end="", flush=True)
+    LIVE_COMMIT_STATUS_LAST_LENGTH = len(message)
+
+
+def _truncate_live_status_message(message):
+    try:
+        term_columns = shutil.get_terminal_size(fallback=(120, 20)).columns
+    except Exception:
+        term_columns = 120
+
+    if term_columns is None or term_columns <= 10:
+        term_columns = 120
+
+    max_len = max(20, term_columns - 1)
+    if len(message) <= max_len:
+        return message
+
+    ellipsis = "..."
+    if max_len <= len(ellipsis):
+        return message[:max_len]
+
+    return message[: max_len - len(ellipsis)] + ellipsis
 
 
 def clear_live_commit_status():
@@ -329,6 +384,19 @@ def parse_arguments(cli_args=None):
         help="Optional Python recursion limit (e.g., 10000) to reduce RecursionError in deep parser paths.",
     )
 
+    parser.add_argument(
+        "--commit-file-extract-timeout-seconds",
+        "--commit-fie-extract-timeout-seconds",
+        dest="commit_file_extract_timeout_seconds",
+        type=float,
+        default=DEFAULT_COMMIT_FILE_EXTRACT_TIMEOUT_SECONDS,
+        help=(
+            "Per-file timeout (seconds) for changed_methods extraction. "
+            "If timeout is reached, only that file's function extraction is skipped and processing continues. "
+            "0 disables timeout (default)."
+        ),
+    )
+
     args = parser.parse_args(cli_args)
 
     if (args.start_git_commit_id is None) != (args.end_git_commit_id is None):
@@ -348,6 +416,9 @@ def parse_arguments(cli_args=None):
 
     if args.python_recursion_limit is not None and args.python_recursion_limit <= 0:
         parser.error("--python-recursion-limit must be > 0")
+
+    if args.commit_file_extract_timeout_seconds is not None and args.commit_file_extract_timeout_seconds < 0:
+        parser.error("--commit-file-extract-timeout-seconds must be >= 0")
 
     if args.single_commit_id is not None and (args.start_git_commit_id is not None or args.end_git_commit_id is not None):
         parser.error("--single-commit-id cannot be used together with start/end range arguments")
@@ -528,7 +599,105 @@ def _extract_function_parts(method, anonymous_name="<anonymous>"):
     return base_name, None
 
 
-def _extract_function_records(modified_file, file_status):
+def _extract_changed_methods_metadata_worker(repo_path, commit_hash, previous_file_name, updated_file_name, out_queue):
+    try:
+        commits = list(
+            pydriller.Repository(
+                repo_path,
+                single=commit_hash,
+            ).traverse_commits()
+        )
+        if not commits:
+            out_queue.put({"ok": False, "error": "Commit not found", "methods": []})
+            return
+
+        commit = commits[0]
+        target_file = None
+        for modified_file in commit.modified_files:
+            old_path = getattr(modified_file, "old_path", None)
+            new_path = getattr(modified_file, "new_path", None)
+            old_norm = str(old_path).strip() if old_path is not None else ""
+            new_norm = str(new_path).strip() if new_path is not None else ""
+            if old_norm == previous_file_name and new_norm == updated_file_name:
+                target_file = modified_file
+                break
+
+        if target_file is None:
+            out_queue.put({"ok": False, "error": "Target file not found in commit", "methods": []})
+            return
+
+        changed_methods = getattr(target_file, "changed_methods", None) or []
+        method_payloads = []
+        for method in changed_methods:
+            parameters = getattr(method, "parameters", None)
+            if parameters is not None:
+                try:
+                    parameters = [str(param) for param in parameters]
+                except Exception:
+                    parameters = []
+
+            method_payloads.append(
+                {
+                    "name": getattr(method, "name", None),
+                    "long_name": getattr(method, "long_name", None),
+                    "parameters": parameters,
+                    "start_line": getattr(method, "start_line", None),
+                    "end_line": getattr(method, "end_line", None),
+                }
+            )
+
+        out_queue.put({"ok": True, "error": None, "methods": method_payloads})
+    except Exception as e:
+        out_queue.put({"ok": False, "error": str(e), "methods": []})
+
+
+class _MethodMetadata:
+    def __init__(self, payload):
+        self.name = payload.get("name")
+        self.long_name = payload.get("long_name")
+        self.parameters = payload.get("parameters")
+        self.start_line = payload.get("start_line")
+        self.end_line = payload.get("end_line")
+
+
+def _get_changed_methods_with_timeout(modified_file, commit_hash, repo_path, previous_file_name, updated_file_name, timeout_seconds):
+    if timeout_seconds is None or timeout_seconds <= 0:
+        changed_methods = getattr(modified_file, "changed_methods", None)
+        return changed_methods, False, None
+
+    ctx = multiprocessing.get_context("spawn")
+    out_queue = ctx.Queue()
+    process = ctx.Process(
+        target=_extract_changed_methods_metadata_worker,
+        args=(repo_path, commit_hash, previous_file_name, updated_file_name, out_queue),
+        daemon=True,
+    )
+
+    process.start()
+    process.join(timeout_seconds)
+
+    if process.is_alive():
+        process.terminate()
+        process.join()
+        return None, True, f"Timeout after {timeout_seconds}s"
+
+    result = None
+    try:
+        result = out_queue.get_nowait()
+    except queue.Empty:
+        result = {"ok": False, "error": "No result returned from worker", "methods": []}
+    finally:
+        out_queue.close()
+        out_queue.join_thread()
+
+    if not result.get("ok"):
+        return None, False, result.get("error")
+
+    methods = [_MethodMetadata(payload) for payload in result.get("methods", [])]
+    return methods, False, None
+
+
+def _extract_function_records(modified_file, file_status, commit_hash=None, repo_path=None):
     records = []
     previous_file_name, updated_file_name = _get_pydriller_paths(modified_file)
 
@@ -541,7 +710,32 @@ def _extract_function_records(modified_file, file_status):
     else:
         anonymous_name = "<anonymous>"
 
-    changed_methods = getattr(modified_file, "changed_methods", None)
+    changed_methods, timed_out, changed_methods_error = _get_changed_methods_with_timeout(
+        modified_file,
+        commit_hash,
+        repo_path,
+        previous_file_name,
+        updated_file_name,
+        COMMIT_FILE_EXTRACT_TIMEOUT_SECONDS,
+    )
+
+    if timed_out:
+        clear_live_commit_status()
+        target_file = updated_file_name or previous_file_name or "<unknown>"
+        print(
+            f"[{strftime('%H:%M:%S', localtime())}] [WARNING] changed_methods timeout for file '{target_file}' "
+            f"in commit {str(commit_hash)[:7]} after {COMMIT_FILE_EXTRACT_TIMEOUT_SECONDS}s; "
+            f"skipping function extraction for this file"
+        )
+        changed_methods = None
+    elif changed_methods_error and DEBUG_MODE:
+        clear_live_commit_status()
+        target_file = updated_file_name or previous_file_name or "<unknown>"
+        print(
+            f"[{strftime('%H:%M:%S', localtime())}] [DEBUG] changed_methods extraction error for file '{target_file}' "
+            f"in commit {str(commit_hash)[:7]}: {changed_methods_error}"
+        )
+
     if changed_methods:
         for method in changed_methods:
             function_name, function_arguments = _extract_function_parts(method, anonymous_name=anonymous_name)
@@ -947,13 +1141,20 @@ def get_commit_modified_data(commit_hash, repo_path):
             for modified_file in commit.modified_files:
                 file_status = _normalize_file_status(modified_file)
                 prev_name, updated_name = _get_pydriller_paths(modified_file)
+                target_file = updated_name or prev_name or "<unknown>"
+                print_live_commit_file_status(commit_hash, target_file)
                 file_type = _normalize_file_type(prev_name, updated_name)
                 function_records = []
                 try:
-                    function_records = _extract_function_records(modified_file, file_status)
+                    function_records = _extract_function_records(
+                        modified_file,
+                        file_status,
+                        commit_hash=commit_hash,
+                        repo_path=repo_path,
+                    )
                 except RecursionError as rec_err:
                     recursion_skipped_files += 1
-                    target_file = updated_name or prev_name or "<unknown>"
+                    clear_live_commit_status()
                     print(
                         f"[{strftime('%H:%M:%S', localtime())}] [WARNING] [skip] fail to process '{target_file}' "
                         f"with RecursionError - {rec_err}; file-level data kept, function rows skipped"
@@ -1382,10 +1583,11 @@ def main():
                 Save into the function name a long messages.
     """
 
-    global REPO_PATH, BATCH_SIZE, ENABLE_REGEX_FUNCTION_FALLBACK
+    global REPO_PATH, BATCH_SIZE, ENABLE_REGEX_FUNCTION_FALLBACK, COMMIT_FILE_EXTRACT_TIMEOUT_SECONDS
     REPO_PATH = args.repo_path
     BATCH_SIZE = args.batch_size
     ENABLE_REGEX_FUNCTION_FALLBACK = args.enable_regex_function_fallback
+    COMMIT_FILE_EXTRACT_TIMEOUT_SECONDS = args.commit_file_extract_timeout_seconds
 
     if args.python_recursion_limit is not None:
         old_limit = sys.getrecursionlimit()
@@ -1444,6 +1646,5 @@ def main():
 
 
 if __name__ == "__main__":
-    # SINGLE MODE: cls; python GitModifiedFilesFunctionsExtractor.py -enable-regex-function-fallback --table-number 1 --repo-path C:\Users\quocb\quocbui\Studies\research\GithubRepo\firefox_workers\firefox-worker-01 --single-commit-id dab7697ab91c048268b91bfa3616a0ea194ae983
-    # python .\GitModifiedFilesFunctionsExtractor.py --table-number 4 --repo-path C:\Users\quocb\quocbui\Studies\research\GithubRepo\firefox_workers\firefox-worker-04 <start_hash> <end_hash>
+    # EXAMPLE OF RANGE MODE: cls; cd C:\Users\quocb\quocbui\Studies\research\GithubRepo\requirement_descriptions_and_bug_counts\Mozilla; ..\venv311\Scripts\Activate.ps1; python .\GitModifiedFilesFunctionsExtractor.py --table-number 1 --repo-path C:\Users\quocb\quocbui\Studies\research\GithubRepo\firefox_workers\firefox-worker-01 --commit-fie-extract-timeout-seconds 900 00000163a890eb9f05f98c4084cd07846aa7cbf0 0cc73f8e55a9781a93769b17be8a0571064430b7
     main()

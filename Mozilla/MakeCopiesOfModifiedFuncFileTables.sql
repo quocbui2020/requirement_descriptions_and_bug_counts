@@ -147,8 +147,9 @@ BEGIN
             [Previous_File_Name] [varchar](1000) NOT NULL,
             [Updated_File_Name] [varchar](1000) NOT NULL,
             [File_Status] [varchar](100) NOT NULL,
+            [File_Type] [varchar](20) NOT NULL,
             [Unique_Hash] AS (
-                CONVERT([varbinary](50), hashbytes(''SHA2_256'', concat([Git_commit_ID], [Previous_File_Name], [Updated_File_Name], [File_Status])))
+                CONVERT([varbinary](50), hashbytes(''SHA2_256'', concat([Git_commit_ID], [Previous_File_Name], [Updated_File_Name], [File_Status], [File_Type])))
             ) PERSISTED,
             CONSTRAINT [' + @pkFilesName + N'] PRIMARY KEY CLUSTERED ([Unique_Hash] ASC)
                 WITH (
@@ -293,33 +294,74 @@ BEGIN
         END
     END
 
-    /* 3) Add FK Modified_Functions_<n> -> Modified_Files_<n> */
-    IF @funcsObjId IS NOT NULL
-       AND @filesObjId IS NOT NULL
-       AND NOT EXISTS (
-            SELECT 1
-            FROM sys.foreign_keys
-            WHERE [name] = @fkFuncsToFilesName
-       )
+    /* 3) PK-only policy: do NOT keep FK Modified_Functions_<n> -> Modified_Files_<n> */
+    IF EXISTS (
+        SELECT 1
+        FROM sys.foreign_keys
+        WHERE [name] = @fkFuncsToFilesName
+    )
     BEGIN
-        SET @sql = N'
-        ALTER TABLE [dbo].[' + @funcsTable + N'] WITH CHECK
-        ADD CONSTRAINT [' + @fkFuncsToFilesName + N']
-        FOREIGN KEY([Modified_File_Unique_Hash])
-        REFERENCES [dbo].[' + @filesTable + N']([Unique_Hash]);
-
-        ALTER TABLE [dbo].[' + @funcsTable + N'] CHECK CONSTRAINT [' + @fkFuncsToFilesName + N'];
-        ';
-
+        SET @sql = N'ALTER TABLE [dbo].[' + @funcsTable + N'] DROP CONSTRAINT [' + @fkFuncsToFilesName + N'];';
         EXEC sp_executesql @sql;
-        PRINT 'Added FK [' + @fkFuncsToFilesName + ']';
+        PRINT 'Dropped FK [' + @fkFuncsToFilesName + '] (PK-only policy)';
     END
     ELSE
     BEGIN
-        PRINT 'Skipped FK (exists or tables missing) [' + @fkFuncsToFilesName + ']';
+        PRINT 'No FK to drop [' + @fkFuncsToFilesName + '] (PK-only policy)';
     END
 
     SET @i += 1;
 END
 
 PRINT 'Done creating shard tables for Modified_Files and Modified_Functions.';
+
+
+/*
+-- Delete tables if they exist (use with caution - data will be lost!)
+SET NOCOUNT ON;
+
+DECLARE @start_n INT = 1;  -- set first n (inclusive)
+DECLARE @end_n   INT = 20;  -- set last n (inclusive)
+
+DECLARE @n INT = @start_n;
+DECLARE @dropConstraintsSql NVARCHAR(MAX);
+DECLARE @dropSql NVARCHAR(MAX);
+
+WHILE @n <= @end_n
+BEGIN
+    -- Build and execute ALTER TABLE ... DROP CONSTRAINT statements for any FK that references either target table
+    SELECT @dropConstraintsSql = STRING_AGG(
+        'ALTER TABLE ' + QUOTENAME(OBJECT_SCHEMA_NAME(fk.parent_object_id)) + '.' + QUOTENAME(OBJECT_NAME(fk.parent_object_id))
+        + ' DROP CONSTRAINT ' + QUOTENAME(fk.name),
+        ';' + CHAR(13)
+    )
+    FROM sys.foreign_keys fk
+    WHERE fk.referenced_object_id IN (
+        OBJECT_ID(N'dbo.Modified_Functions_' + CAST(@n AS NVARCHAR(10))),
+        OBJECT_ID(N'dbo.Modified_Files_'    + CAST(@n AS NVARCHAR(10)))
+    );
+
+    IF @dropConstraintsSql IS NOT NULL
+    BEGIN
+        EXEC sp_executesql @dropConstraintsSql;
+    END
+
+    -- Drop Modified_Functions_n if it exists
+    IF OBJECT_ID(N'dbo.Modified_Functions_' + CAST(@n AS NVARCHAR(10))) IS NOT NULL
+    BEGIN
+        SET @dropSql = N'DROP TABLE dbo.' + QUOTENAME(N'Modified_Functions_' + CAST(@n AS NVARCHAR(10)));
+        EXEC sp_executesql @dropSql;
+    END
+
+    -- Drop Modified_Files_n if it exists
+    IF OBJECT_ID(N'dbo.Modified_Files_' + CAST(@n AS NVARCHAR(10))) IS NOT NULL
+    BEGIN
+        SET @dropSql = N'DROP TABLE dbo.' + QUOTENAME(N'Modified_Files_' + CAST(@n AS NVARCHAR(10)));
+        EXEC sp_executesql @dropSql;
+    END
+
+    SET @n = @n + 1;
+END
+
+PRINT 'Completed drop for specified range.';
+*/
