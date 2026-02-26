@@ -1,8 +1,11 @@
 """
-Mercurial to Git Hash Mapper - ROBUST OVERNIGHT MODE with PARALLEL PROCESSING
+Mercurial/Git Hash Mapper - ROBUST OVERNIGHT MODE with PARALLEL PROCESSING
 
-Maps Mercurial changesets to Git commits using Mozilla's Lando API.
-Queries database for unmapped Hg hashes and fetches their Git equivalents.
+Supports two mapping directions using Mozilla's Lando API:
+- Hg Changeset ID -> Git Commit ID (hg2git)
+- Git Commit ID -> Hg Changeset ID (git2hg)
+
+Queries database for unmapped records and fetches their equivalents.
 
 ROBUST FEATURES:
 - Infinite retry with progressive backoff (1min -> 2min -> 5min -> 10min indefinitely)
@@ -17,8 +20,11 @@ PARALLEL PROCESSING:
 - You manually specify start and end hash_id to avoid overlap
 
 USAGE:
-    Process all unmapped records:
+    Process all unmapped records (default hg2git):
         python HgGitMapper.py
+
+    Process all unmapped records for Git -> Hg:
+        python HgGitMapper.py --direction git2hg
     
     Process specific hash_id range (hash_id is a string):
         python HgGitMapper.py 000000000000 111111111111
@@ -32,8 +38,9 @@ USAGE:
         Window 3: python HgGitMapper.py 400000000000 5fffffffffff
         ... etc
 
-API ENDPOINT:
+API ENDPOINTS:
 https://lando.moz.tools/api/hg2git/firefox/{hg_hash}
+https://lando.moz.tools/api/git2hg/firefox/{git_hash}
 
 Response format:
 {
@@ -59,8 +66,8 @@ conn_str = 'DRIVER={ODBC Driver 18 for SQL Server};' \
            'Trusted_Connection=yes;'
 
 # SQL query templates
-# All unmapped records (no range filter)
-get_unmapped_hashes_query_all = '''
+# Hg->Git: all unmapped records (no range filter)
+get_unmapped_hg_hashes_query_all = '''
 SELECT hash_id
 FROM Changesets s
 LEFT JOIN HgGit_Mappings m ON m.Hg_Changeset_ID = s.Hash_Id
@@ -68,8 +75,8 @@ WHERE m.Hg_Changeset_ID IS NULL
 ORDER BY s.Hash_Id ASC;
 '''
 
-# Range-based query (for parallel processing)
-get_unmapped_hashes_query_range = '''
+# Hg->Git: range-based query (for parallel processing)
+get_unmapped_hg_hashes_query_range = '''
 SELECT hash_id
 FROM Changesets s
 LEFT JOIN HgGit_Mappings m ON m.Hg_Changeset_ID = s.Hash_Id
@@ -77,6 +84,26 @@ WHERE m.Hg_Changeset_ID IS NULL
   AND s.Hash_Id >= ?
   AND s.Hash_Id <= ?
 ORDER BY s.Hash_Id ASC;
+'''
+
+# Git->Hg: all unmapped records (no range filter)
+get_unmapped_git_hashes_query_all = '''
+SELECT g.Git_Commit_ID
+FROM GitCommitList g
+LEFT JOIN HgGit_Mappings m on m.Git_Commit_ID = g.Git_Commit_ID
+WHERE m.Git_Commit_ID is null
+ORDER BY g.Git_Commit_ID;
+'''
+
+# Git->Hg: range-based query (for parallel processing)
+get_unmapped_git_hashes_query_range = '''
+SELECT g.Git_Commit_ID
+FROM GitCommitList g
+LEFT JOIN HgGit_Mappings m on m.Git_Commit_ID = g.Git_Commit_ID
+WHERE m.Git_Commit_ID is null
+    AND g.Git_Commit_ID >= ?
+    AND g.Git_Commit_ID <= ?
+ORDER BY g.Git_Commit_ID;
 '''
 
 insert_mapping_query = '''
@@ -87,6 +114,14 @@ VALUES
 '''
 
 
+def build_not_found_marker(source_hash):
+    """
+    Build a deterministic marker for unresolved mappings.
+    Keeps marker length at 40 chars to stay compatible with hash-sized columns.
+    """
+    return f"NOT_FOUND_{str(source_hash)[:30]}"
+
+
 def parse_arguments():
     """
     Parse command-line arguments for range-based parallel processing.
@@ -95,14 +130,17 @@ def parse_arguments():
         argparse.Namespace with start_hash_id and end_hash_id (or None for both)
     """
     parser = argparse.ArgumentParser(
-        description='Map Mercurial changesets to Git commits (supports parallel processing)',
+        description='Map hashes between Mercurial changesets and Git commits (supports parallel processing)',
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog='''
 Examples:
-  Process all unmapped records:
+  Process all unmapped records (default hg2git):
     python HgGitMapper.py
+
+  Process all unmapped records in Git -> Hg direction:
+    python HgGitMapper.py --direction git2hg
   
-  Process specific hash_id range (hash_id is a string):
+  Process specific hash_id range (ID is a string):
     python HgGitMapper.py 000000000000 1fffffffffff
     python HgGitMapper.py 200000000000 3fffffffffff
     python HgGitMapper.py 400000000000 5fffffffffff
@@ -115,6 +153,14 @@ Examples:
         '''
     )
     
+    parser.add_argument(
+        '--direction',
+        type=str,
+        choices=['hg2git', 'git2hg'],
+        default='hg2git',
+        help='Mapping direction: hg2git (default) or git2hg'
+    )
+
     parser.add_argument(
         'start_hash_id',
         type=str,
@@ -144,18 +190,20 @@ Examples:
     return args
 
 
-def get_unmapped_hashes(start_hash_id=None, end_hash_id=None):
+def get_unmapped_hashes(direction='hg2git', start_hash_id=None, end_hash_id=None):
     """
-    Get list of Hg changesets that haven't been mapped to Git commits yet.
+    Get list of IDs that haven't been mapped yet for the selected direction.
     
     Args:
         start_hash_id: Starting hash_id (inclusive), None for no lower bound
         end_hash_id: Ending hash_id (inclusive), None for no upper bound
     
     Returns:
-        List of Hg changeset IDs in the specified range
+        List of IDs in the specified range
     """
     global conn_str
+    conn = None
+    cursor = None
     
     # Determine which query to use
     use_range = (start_hash_id is not None and end_hash_id is not None)
@@ -164,12 +212,16 @@ def get_unmapped_hashes(start_hash_id=None, end_hash_id=None):
         conn = pyodbc.connect(conn_str)
         cursor = conn.cursor()
         
-        if use_range:
-            # Range mode: filter by hash_id range
-            cursor.execute(get_unmapped_hashes_query_range, (start_hash_id, end_hash_id))
+        if use_range and direction == 'hg2git':
+            cursor.execute(get_unmapped_hg_hashes_query_range, (start_hash_id, end_hash_id))
+        elif use_range and direction == 'git2hg':
+            cursor.execute(get_unmapped_git_hashes_query_range, (start_hash_id, end_hash_id))
+        elif direction == 'hg2git':
+            cursor.execute(get_unmapped_hg_hashes_query_all)
+        elif direction == 'git2hg':
+            cursor.execute(get_unmapped_git_hashes_query_all)
         else:
-            # All mode: fetch all unmapped
-            cursor.execute(get_unmapped_hashes_query_all)
+            raise ValueError(f"Unsupported direction: {direction}")
         
         rows = cursor.fetchall()
         
@@ -179,7 +231,7 @@ def get_unmapped_hashes(start_hash_id=None, end_hash_id=None):
         return hashes
     
     except Exception as e:
-        print(f"Error fetching unmapped hashes: {e}")
+        print(f"Error fetching unmapped IDs ({direction}): {e}")
         raise
     
     finally:
@@ -272,6 +324,89 @@ def fetch_git_hash_for_hg(hg_hash):
         print(f"[RETRY] Retrying now (Attempt {attempt + 1})...")
 
 
+def fetch_hg_hash_for_git(git_hash):
+    """
+    Fetch Mercurial changeset hash for a given Git commit hash.
+    ROBUST MODE: Infinite retry with progressive backoff.
+
+    Args:
+        git_hash: Git commit hash
+
+    Returns:
+        tuple: (git_hash, hg_hash) or (None, None) if not found
+    """
+    request_url = f"https://lando.moz.tools/api/git2hg/firefox/{git_hash}"
+    attempt = 0
+
+    # Progressive backoff schedule: 1min, 2min, 5min, 10min, then 10min indefinitely
+    backoff_schedule = [15, 30, 60, 300]  # seconds
+
+    while True:  # INFINITE RETRY - never give up!
+        attempt += 1
+
+        try:
+            # Make request with timeout
+            response = requests.get(request_url, timeout=60)
+
+            if response.status_code == 200:
+                # SUCCESS - parse the JSON response
+                data = response.json()
+                git_hash_returned = data.get('git_hash')
+                hg_hash = data.get('hg_hash')
+
+                # Validate response
+                if git_hash_returned and hg_hash:
+                    return git_hash_returned, hg_hash
+                else:
+                    print(f"\n[WARNING] Invalid response format: {data}")
+                    return None, None
+
+            elif response.status_code == 404:
+                # Not found - this is a valid response, don't retry
+                print(f"\n[NOT FOUND] No Hg mapping exists for {git_hash}")
+                return None, None
+
+            elif response.status_code == 429:
+                # Rate limited
+                print(f"\n[ATTEMPT {attempt}] Rate limited (429)")
+                print(f"[URL] {request_url}")
+
+            else:
+                # Other HTTP error
+                print(f"\n[ATTEMPT {attempt}] HTTP {response.status_code} error")
+                print(f"[URL] {request_url}")
+
+        except requests.exceptions.Timeout:
+            print(f"\n[ATTEMPT {attempt}] Request timeout (exceeded 60 seconds)")
+            print(f"[URL] {request_url}")
+
+        except (requests.exceptions.ConnectionError, ConnectionResetError) as e:
+            print(f"\n[ATTEMPT {attempt}] Connection error: {type(e).__name__}")
+            print(f"[URL] {request_url}")
+
+        except Exception as e:
+            print(f"\n[ATTEMPT {attempt}] Unexpected error: {type(e).__name__}: {e}")
+            print(f"[URL] {request_url}")
+
+        # Calculate wait time using progressive backoff
+        if attempt <= len(backoff_schedule):
+            wait_time = backoff_schedule[attempt - 1]
+        else:
+            wait_time = 600  # 10 minutes for all subsequent attempts
+
+        wait_minutes = wait_time / 60
+        print(f"[WAIT] Waiting {wait_minutes:.1f} minute(s) before retry...")
+        print(f"[INFO] Will retry at: {strftime('%Y-%m-%d %H:%M:%S', localtime(time.time() + wait_time))}")
+
+        # Countdown timer
+        for remaining in range(int(wait_time), 0, -1):
+            print(f"\rWaiting for ({int(wait_time)} seconds): {remaining} seconds remaining...", end="", flush=True)
+            time.sleep(1)
+        print()  # New line after countdown
+
+        print(f"[RETRY] Retrying now (Attempt {attempt + 1})...")
+
+
 def save_mapping_to_db(hg_hash, git_hash):
     """
     Save Hg-Git mapping to database.
@@ -284,6 +419,8 @@ def save_mapping_to_db(hg_hash, git_hash):
         bool: True if inserted successfully, False if already exists
     """
     global conn_str
+    conn = None
+    cursor = None
     
     try:
         conn = pyodbc.connect(conn_str)
@@ -332,7 +469,7 @@ def map_hg_to_git(start_hash_id=None, end_hash_id=None):
     
     # Get list of unmapped hashes in the specified range
     print("\nFetching unmapped Hg changesets from database...", end="", flush=True)
-    unmapped_hashes = get_unmapped_hashes(start_hash_id, end_hash_id)
+    unmapped_hashes = get_unmapped_hashes(direction='hg2git', start_hash_id=start_hash_id, end_hash_id=end_hash_id)
     total_count = len(unmapped_hashes)
     print(f"Done")
     
@@ -348,28 +485,28 @@ def map_hg_to_git(start_hash_id=None, end_hash_id=None):
     print("\n" + "=" * 80)
     print("Starting mapping process...")
     print("=" * 80)
-    
+
     # Statistics
     processed_count = 0
     mapped_count = 0
     not_found_count = 0
     skipped_count = 0
-    
+
     # Process each hash
     for idx, hg_hash in enumerate(unmapped_hashes, 1):
         remaining = total_count - idx + 1
-        
+
         range_label = f"RANGE {start_hash_id}-{end_hash_id}" if use_range else "ALL"
         print(f"\n[{strftime('%m/%d/%Y %H:%M:%S', localtime())}] [{range_label}] [{idx}/{total_count}] Remaining: {remaining}")
         print(f"Processing Hg hash: {hg_hash}...", end="", flush=True)
-        
+
         # Fetch Git hash from API
         git_hash, hg_hash_returned = fetch_git_hash_for_hg(hg_hash)
-        
+
         if git_hash and hg_hash_returned:
             # Save to database with actual Git hash
             success = save_mapping_to_db(hg_hash_returned, git_hash)
-            
+
             if success:
                 print(f"Mapped!")
                 print(f"  Hg: {hg_hash_returned}")
@@ -379,25 +516,128 @@ def map_hg_to_git(start_hash_id=None, end_hash_id=None):
                 print(f"Skipped (already exists)")
                 skipped_count += 1
         else:
-            # No Git mapping found - save as "Not Found"
-            success = save_mapping_to_db(hg_hash, "Not Found")
-            
+            # No Git mapping found - save with deterministic NOT_FOUND marker
+            not_found_git_marker = build_not_found_marker(hg_hash)
+            success = save_mapping_to_db(hg_hash, not_found_git_marker)
+
             if success:
-                print(f"Not found (saved as 'Not Found')")
+                print(f"Not found (saved as '{not_found_git_marker}')")
                 not_found_count += 1
             else:
-                print(f"Skipped (already marked as 'Not Found')")
+                print(f"Skipped (already marked as Not Found)")
                 skipped_count += 1
-        
+
         processed_count += 1
-        
+
         # Progress summary every 10 records
         if processed_count % 10 == 0:
             print(f"\n[CHECKPOINT {range_label}] Processed: {processed_count:,}/{total_count:,} | Mapped: {mapped_count:,} | Not Found: {not_found_count:,} | Skipped: {skipped_count:,}")
-        
+
         # Small delay between requests to be respectful
         time.sleep(2)
-    
+
+    # Final summary
+    print("\n" + "=" * 80)
+    if use_range:
+        print(f"MAPPING COMPLETE - RANGE {start_hash_id} to {end_hash_id}")
+    else:
+        print("MAPPING COMPLETE - ALL RECORDS")
+    print("=" * 80)
+    print(f"Total processed:  {processed_count:,}")
+    print(f"Mapped:           {mapped_count:,}")
+    print(f"Not found:        {not_found_count:,}")
+    print(f"Skipped:          {skipped_count:,}")
+    print(f"End time:         {strftime('%Y-%m-%d %H:%M:%S', localtime())}")
+    print("=" * 80)
+
+
+def map_git_to_hg(start_hash_id=None, end_hash_id=None):
+    """
+    Main function to map all unmapped Git commits to Hg changesets.
+
+    Args:
+        start_hash_id: Starting Git_Commit_ID (inclusive), None for no lower bound
+        end_hash_id: Ending Git_Commit_ID (inclusive), None for no upper bound
+    """
+    use_range = (start_hash_id is not None and end_hash_id is not None)
+
+    print("=" * 80)
+    if use_range:
+        print(f"ROBUST OVERNIGHT MODE - Git to Hg Mapper [RANGE MODE]")
+        print(f"Processing Git_Commit_ID range: {start_hash_id} to {end_hash_id}")
+    else:
+        print("ROBUST OVERNIGHT MODE - Git to Hg Mapper [ALL RECORDS]")
+    print(f"Start time: {strftime('%Y-%m-%d %H:%M:%S', localtime())}")
+    print("=" * 80)
+
+    # Get list of unmapped hashes in the specified range
+    print("\nFetching unmapped Git commits from database...", end="", flush=True)
+    unmapped_hashes = get_unmapped_hashes(direction='git2hg', start_hash_id=start_hash_id, end_hash_id=end_hash_id)
+    total_count = len(unmapped_hashes)
+    print(f"Done")
+
+    if use_range:
+        print(f"Records in range {start_hash_id}-{end_hash_id}: {total_count:,}")
+    else:
+        print(f"Total unmapped: {total_count:,}")
+
+    if total_count == 0:
+        print("\nNo unmapped hashes found in this range. All done!")
+        return
+
+    print("\n" + "=" * 80)
+    print("Starting mapping process...")
+    print("=" * 80)
+
+    # Statistics
+    processed_count = 0
+    mapped_count = 0
+    not_found_count = 0
+    skipped_count = 0
+
+    # Process each hash
+    for idx, git_hash in enumerate(unmapped_hashes, 1):
+        remaining = total_count - idx + 1
+
+        range_label = f"RANGE {start_hash_id}-{end_hash_id}" if use_range else "ALL"
+        print(f"\n[{strftime('%m/%d/%Y %H:%M:%S', localtime())}] [{range_label}] [{idx}/{total_count}] Remaining: {remaining}")
+        print(f"Processing Git hash: {git_hash}...", end="", flush=True)
+
+        # Fetch Hg hash from API
+        git_hash_returned, hg_hash = fetch_hg_hash_for_git(git_hash)
+
+        if git_hash_returned and hg_hash:
+            success = save_mapping_to_db(hg_hash, git_hash_returned)
+
+            if success:
+                print(f"Mapped!")
+                print(f"  Git: {git_hash_returned}")
+                print(f"  Hg: {hg_hash}")
+                mapped_count += 1
+            else:
+                print(f"Skipped (already exists)")
+                skipped_count += 1
+        else:
+            # No Hg mapping found - save with deterministic NOT_FOUND marker
+            not_found_hg_marker = build_not_found_marker(git_hash)
+            success = save_mapping_to_db(not_found_hg_marker, git_hash)
+
+            if success:
+                print(f"Not found (saved as '{not_found_hg_marker}')")
+                not_found_count += 1
+            else:
+                print(f"Skipped (already marked as Not Found)")
+                skipped_count += 1
+
+        processed_count += 1
+
+        # Progress summary every 10 records
+        if processed_count % 10 == 0:
+            print(f"\n[CHECKPOINT {range_label}] Processed: {processed_count:,}/{total_count:,} | Mapped: {mapped_count:,} | Not Found: {not_found_count:,} | Skipped: {skipped_count:,}")
+
+        # Small delay between requests to be respectful
+        time.sleep(2)
+
     # Final summary
     print("\n" + "=" * 80)
     if use_range:
@@ -428,11 +668,17 @@ if __name__ == "__main__":
 
     ## Run mapper with or without range filtering
     if args.start_hash_id is not None and args.end_hash_id is not None:
-        print(f"\n>>> Running in RANGE mode: hash_id {args.start_hash_id} to {args.end_hash_id}")
-        map_hg_to_git(start_hash_id=args.start_hash_id, end_hash_id=args.end_hash_id)
+        print(f"\n>>> Running in RANGE mode: ID {args.start_hash_id} to {args.end_hash_id} | direction={args.direction}")
+        if args.direction == 'hg2git':
+            map_hg_to_git(start_hash_id=args.start_hash_id, end_hash_id=args.end_hash_id)
+        else:
+            map_git_to_hg(start_hash_id=args.start_hash_id, end_hash_id=args.end_hash_id)
     else:
         # Process all unmapped records
-        print("\n>>> Running in ALL RECORDS mode")
-        map_hg_to_git()
+        print(f"\n>>> Running in ALL RECORDS mode | direction={args.direction}")
+        if args.direction == 'hg2git':
+            map_hg_to_git()
+        else:
+            map_git_to_hg()
     
     print("\nScript completed. Exiting.")

@@ -32,6 +32,27 @@ BACKOUT PATTERNS DETECTED:
 - "Reverted changeset abc123"
 - And more variations (case-insensitive)
 
+PARALLEL PROCESSING SUPPORT:
+- Supports running multiple instances simultaneously with manual range partitioning
+- Each instance processes records within a specified Hash_Id range
+- You manually specify start and end Hash_Id to avoid overlap
+
+USAGE:
+    Process all unprocessed changesets:
+        python HgChangesetsDetailsExtractor.py
+    
+    Process specific Hash_Id range:
+        python HgChangesetsDetailsExtractor.py 000000000000 1fffffffffff
+        python HgChangesetsDetailsExtractor.py 200000000000 3fffffffffff
+        python HgChangesetsDetailsExtractor.py 400000000000 5fffffffffff
+        ... etc
+
+    Example for parallel processing (adjust ranges based on your data):
+        Window 1: python HgChangesetsDetailsExtractor.py 000000000000 1fffffffffff
+        Window 2: python HgChangesetsDetailsExtractor.py 200000000000 3fffffffffff
+        Window 3: python HgChangesetsDetailsExtractor.py 400000000000 5fffffffffff
+        ... etc
+
 REQUIREMENTS:
 - Local clone of mozilla-central repository
 - Mercurial installed  
@@ -39,13 +60,13 @@ REQUIREMENTS:
 """
 
 import subprocess
-from unittest import result
 import pyodbc
 from time import strftime, localtime
 import re
 import sys
 import requests
 from time import sleep
+import argparse
 
 # ========== CONFIGURATION ==========
 # Path to local mozilla-central repository
@@ -67,12 +88,24 @@ BATCH_SIZE = 100
 # Progress update frequency (print progress every N changesets)
 PROGRESS_FREQUENCY = 10
 
+# Progress bar width for compact phase visualization
+PROGRESS_BAR_WIDTH = 24
+
 # Use Mercurial search for more accurate backout detection (slower)
 # Set to False for faster processing, relies on commit message parsing only
 USE_HG_SEARCH_FOR_BACKOUTS = False
 
 # Debug mode - set to False to reduce log verbosity (only show progress/timing)
 DEBUG_MODE = True
+
+# Infinite retry backoff schedule for public API requests (seconds): grows then caps
+API_RETRY_BACKOFF_SECONDS = [1, 2, 5, 10, 30, 60, 120, 300]
+
+# Fixed delay for local resource retries (DB/files)
+LOCAL_RETRY_DELAY_SECONDS = 5
+
+# Network timeout for Lando API requests (seconds)
+LANDO_API_TIMEOUT_SECONDS = 10
 # ====================================
 
 # Cache for resolving revision numbers to hashes
@@ -82,6 +115,115 @@ HASH_TO_REV_CACHE = {}
 # Cache for Git/Hg hash mappings
 GIT_TO_HG_CACHE = {}
 HG_TO_GIT_CACHE = {}
+
+
+def normalize_mapping_hash(mapping_value):
+    """
+    Normalize mapping values from HgGit_Mappings.
+    Treat placeholders like "Not Found" as unresolved (None).
+    """
+    if mapping_value is None:
+        return None
+
+    value = str(mapping_value).strip()
+    if not value:
+        return None
+
+    normalized = value.lower().replace(' ', '_')
+    if normalized == 'not_found' or normalized.startswith('not_found_'):
+        return None
+
+    return value
+
+
+def get_api_retry_delay(attempt):
+    """
+    Get retry delay in seconds for API attempt number (1-based).
+    Delay increases progressively and then remains capped.
+    """
+    if attempt <= 0:
+        return API_RETRY_BACKOFF_SECONDS[0]
+    index = min(attempt - 1, len(API_RETRY_BACKOFF_SECONDS) - 1)
+    return API_RETRY_BACKOFF_SECONDS[index]
+
+
+def print_progress_bar(phase, current, total, indent="  "):
+    """
+    Print a compact text progress bar.
+    """
+    if total <= 0:
+        return
+
+    ratio = current / total
+    if ratio < 0:
+        ratio = 0
+    if ratio > 1:
+        ratio = 1
+
+    filled = int(PROGRESS_BAR_WIDTH * ratio)
+    bar = ('#' * filled) + ('-' * (PROGRESS_BAR_WIDTH - filled))
+    percent = ratio * 100
+    print(
+        f"{indent}[{strftime('%H:%M:%S', localtime())}] [{phase}] "
+        f"|{bar}| {percent:6.2f}% ({current}/{total})"
+    )
+
+
+def parse_arguments():
+    """
+    Parse command-line arguments for range-based parallel processing.
+    
+    Returns:
+        argparse.Namespace with start_hash_id and end_hash_id (or None for both)
+    """
+    parser = argparse.ArgumentParser(
+        description='Extract Mercurial changeset details (supports parallel processing)',
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog='''
+Examples:
+  Process all unprocessed changesets:
+    python HgChangesetsDetailsExtractor.py
+  
+  Process specific Hash_Id range:
+    python HgChangesetsDetailsExtractor.py 000000000000 1fffffffffff
+    python HgChangesetsDetailsExtractor.py 200000000000 3fffffffffff
+    python HgChangesetsDetailsExtractor.py 400000000000 5fffffffffff
+
+  Example for parallel processing:
+    Window 1: python HgChangesetsDetailsExtractor.py 000000000000 1fffffffffff
+    Window 2: python HgChangesetsDetailsExtractor.py 200000000000 3fffffffffff
+    Window 3: python HgChangesetsDetailsExtractor.py 400000000000 5fffffffffff
+    ... (adjust ranges based on your data distribution)
+        '''
+    )
+    
+    parser.add_argument(
+        'start_hash_id',
+        type=str,
+        nargs='?',
+        default=None,
+        help='Starting Hash_Id string (inclusive)'
+    )
+    
+    parser.add_argument(
+        'end_hash_id',
+        type=str,
+        nargs='?',
+        default=None,
+        help='Ending Hash_Id string (inclusive)'
+    )
+    
+    args = parser.parse_args()
+    
+    # Validation
+    if (args.start_hash_id is None) != (args.end_hash_id is None):
+        parser.error("Both start_hash_id and end_hash_id must be specified together")
+    
+    if args.start_hash_id is not None and args.end_hash_id is not None:
+        if args.start_hash_id > args.end_hash_id:
+            parser.error(f"start_hash_id ({args.start_hash_id}) must be <= end_hash_id ({args.end_hash_id})")
+    
+    return args
 
 
 def resolve_rev_to_hash(rev_number):
@@ -154,89 +296,92 @@ def resolve_git_to_hg(git_commit_id):
         git_hash = git_commit_id.strip()
         if not git_hash:
             return None
-        
+
         if DEBUG_MODE:
             print(f"[DEBUG] resolve_git_to_hg called for: {git_hash[:12]}...")
-        
-        # If short Git hash, resolve to full hash first using GitCommitList
-        if len(git_hash) < 40:
-            try:
-                conn = pyodbc.connect(CONN_STR)
-                cursor = conn.cursor()
-                
-                query = '''
-                    SELECT [Git_Commit_ID]
-                    FROM [dbo].[GitCommitList]
-                    WHERE [Git_Commit_ID] LIKE ?
-                '''
-                cursor.execute(query, git_hash + '%')
-                row = cursor.fetchone()
-                cursor.close()
-                conn.close()
-                
-                if row:
-                    git_hash = row[0]
-                    if DEBUG_MODE:
-                        print(f"[DEBUG] Resolved short Git hash to full: {git_hash[:12]}...")
-                else:
-                    if DEBUG_MODE:
-                        print(f"[DEBUG] Could not resolve short Git hash, returning None")
-                    return None
-            except Exception as e:
-                if DEBUG_MODE:
-                    print(f"[DEBUG] Error resolving short Git hash: {e}")
-                return None
-        
+
         # Check cache first
         if git_hash in GIT_TO_HG_CACHE:
             if DEBUG_MODE:
                 print(f"[DEBUG] Found in cache: {GIT_TO_HG_CACHE[git_hash][:12]}")
             return GIT_TO_HG_CACHE[git_hash]
-        
-        # Query database
-        conn = pyodbc.connect(CONN_STR)
-        cursor = conn.cursor()
-        
-        if DEBUG_MODE:
-            print(f"[DEBUG] Querying HgGit_Mappings for Git hash: {git_hash[:12]}...")
-        query = '''
-            SELECT [Hg_Changeset_ID]
-            FROM [dbo].[HgGit_Mappings]
-            WHERE [Git_Commit_ID] = ?
-        '''
-        cursor.execute(query, git_hash)
-        row = cursor.fetchone()
-        cursor.close()
-        conn.close()
-        
-        if row:
-            hg_hash = row[0]
-            if DEBUG_MODE:
-                print(f"[DEBUG] Found in database: {hg_hash[:12]}")
-            GIT_TO_HG_CACHE[git_hash] = hg_hash
-            HG_TO_GIT_CACHE[hg_hash] = git_hash
-            return hg_hash
-        
-        if DEBUG_MODE:
-            print(f"[DEBUG] Not in database, calling Lando API...")
-        # Fallback to Lando API
-        try:
-            url = f'https://lando.moz.tools/api/git2hg/firefox/{git_hash}'
-            response = requests.get(url, timeout=10)
-            if response.status_code == 200:
-                data = response.json()
-                hg_hash = data.get('hg_hash')  # API returns 'hg_hash', not 'hg_changeset_id'
+
+        # Resolve short hash and query DB with infinite local retries
+        db_attempt = 0
+        while True:
+            db_attempt += 1
+            conn = None
+            cursor = None
+            try:
+                conn = pyodbc.connect(CONN_STR)
+                cursor = conn.cursor()
+
+                if DEBUG_MODE:
+                    print(f"[DEBUG] Querying HgGit_Mappings for Git hash: {git_hash[:12]}...")
+                query = '''
+                    SELECT [Hg_Changeset_ID]
+                    FROM [dbo].[HgGit_Mappings]
+                    WHERE [Git_Commit_ID] = ?
+                '''
+                cursor.execute(query, git_hash)
+                row = cursor.fetchone()
+                cursor.close()
+                conn.close()
+
+                if row:
+                    hg_hash = normalize_mapping_hash(row[0])
+                else:
+                    hg_hash = None
+
                 if hg_hash:
+                    if DEBUG_MODE:
+                        print(f"[DEBUG] Found in database: {hg_hash[:12]}")
                     GIT_TO_HG_CACHE[git_hash] = hg_hash
                     HG_TO_GIT_CACHE[hg_hash] = git_hash
-                    print(f"[{strftime('%H:%M:%S', localtime())}] [Lando API] Git {git_hash[:12]} -> Hg {hg_hash[:12]}")
-                    sleep(0.1)  # Rate limiting
                     return hg_hash
-        except Exception as e:
-            print(f"\n[{strftime('%H:%M:%S', localtime())}] [WARNING] Lando API failed for {git_hash[:12]}: {e}")
-        
-        return None
-        
+
+                if DEBUG_MODE:
+                    print(f"[DEBUG] Not in database, calling Lando API...")
+                break
+
+            except Exception as e:
+                if cursor:
+                    cursor.close()
+                if conn:
+                    conn.close()
+                print(f"[{strftime('%H:%M:%S', localtime())}] [WARNING] Local DB error resolving Git->Hg for {git_hash[:12]} (attempt {db_attempt}): {e}. Retrying in {LOCAL_RETRY_DELAY_SECONDS}s...")
+                sleep(LOCAL_RETRY_DELAY_SECONDS)
+
+        # Fallback to Lando API with infinite retry + throttled backoff
+        url = f'https://lando.moz.tools/api/git2hg/firefox/{git_hash}'
+        api_attempt = 0
+        while True:
+            api_attempt += 1
+            try:
+                response = requests.get(url, timeout=LANDO_API_TIMEOUT_SECONDS)
+                if response.status_code == 200:
+                    data = response.json()
+                    hg_hash = data.get('hg_hash')
+                    if hg_hash:
+                        GIT_TO_HG_CACHE[git_hash] = hg_hash
+                        HG_TO_GIT_CACHE[hg_hash] = git_hash
+                        print(f"[{strftime('%H:%M:%S', localtime())}] [Lando API] Git {git_hash[:12]} -> Hg {hg_hash[:12]}")
+                        return hg_hash
+
+                    print(f"[{strftime('%H:%M:%S', localtime())}] [WARNING] Invalid Lando API response for Git {git_hash[:12]} (attempt {api_attempt}), retrying...")
+                elif response.status_code == 404:
+                    return None
+                else:
+                    print(f"[{strftime('%H:%M:%S', localtime())}] [WARNING] Lando API HTTP {response.status_code} for Git {git_hash[:12]} (attempt {api_attempt}), retrying...")
+            except requests.exceptions.RequestException as e:
+                print(f"[{strftime('%H:%M:%S', localtime())}] [WARNING] Network/API error for Git {git_hash[:12]} (attempt {api_attempt}): {e}")
+            except Exception as e:
+                print(f"[{strftime('%H:%M:%S', localtime())}] [WARNING] Unexpected API error for Git {git_hash[:12]} (attempt {api_attempt}): {e}")
+
+            delay = get_api_retry_delay(api_attempt)
+            print(f"[{strftime('%H:%M:%S', localtime())}] [INFO] Waiting {delay}s before retrying Git {git_hash[:12]}...")
+            sleep(delay)
+
     except Exception as e:
         print(f"\n[{strftime('%H:%M:%S', localtime())}] [WARNING] Error resolving Git to Hg for {git_commit_id[:12]}: {e}")
         return None
@@ -273,24 +418,25 @@ def identify_and_convert_hash(hash_id):
         conn.close()
         
         if row:
-            hg_hash, git_hash = row[0], row[1]
+            hg_hash, git_hash = normalize_mapping_hash(row[0]), normalize_mapping_hash(row[1])
             
-            if DEBUG_MODE:
-                print(f"[DEBUG] Found in HgGit_Mappings: hg={hg_hash[:12]}, git={git_hash[:12]}")
-            
-            # Cache both directions
-            GIT_TO_HG_CACHE[git_hash] = hg_hash
-            HG_TO_GIT_CACHE[hg_hash] = git_hash
-            
-            # If hash matches Git column, it's a Git hash
-            if hash_id == git_hash:
+            if hg_hash and git_hash:
                 if DEBUG_MODE:
-                    print(f"[DEBUG] Hash is Git, returning Hg: {hg_hash[:12]}")
-                return (hg_hash, True)
-            else:
-                if DEBUG_MODE:
-                    print(f"[DEBUG] Hash is Hg, returning as-is: {hg_hash[:12]}")
-                return (hg_hash, False)
+                    print(f"[DEBUG] Found in HgGit_Mappings: hg={hg_hash[:12]}, git={git_hash[:12]}")
+            
+                # Cache both directions
+                GIT_TO_HG_CACHE[git_hash] = hg_hash
+                HG_TO_GIT_CACHE[hg_hash] = git_hash
+                
+                # If hash matches Git column, it's a Git hash
+                if hash_id == git_hash:
+                    if DEBUG_MODE:
+                        print(f"[DEBUG] Hash is Git, returning Hg: {hg_hash[:12]}")
+                    return (hg_hash, True)
+                else:
+                    if DEBUG_MODE:
+                        print(f"[DEBUG] Hash is Hg, returning as-is: {hg_hash[:12]}")
+                    return (hg_hash, False)
         
         if DEBUG_MODE:
             print(f"[DEBUG] Not in HgGit_Mappings, trying API conversion...")
@@ -336,6 +482,15 @@ GET_ALL_CHANGESETS_QUERY = '''
     SELECT [Hash_Id]
     FROM [dbo].[Changesets]
     WHERE [Description] IS NULL -- This condition helps to only process changesets that haven't been updated yet
+    ORDER BY [Hash_Id]
+'''
+
+GET_CHANGESETS_RANGE_QUERY = '''
+    SELECT [Hash_Id]
+    FROM [dbo].[Changesets]
+    WHERE [Description] IS NULL
+      AND [Hash_Id] >= ?
+      AND [Hash_Id] <= ?
     ORDER BY [Hash_Id]
 '''
 
@@ -681,14 +836,18 @@ def update_backed_out_changesets_in_db(backout_changeset_hash, backed_out_hashes
     if not backed_out_hashes:
         return 0
     
-    updated_count = 0
-    
-    try:
-        conn = pyodbc.connect(CONN_STR)
-        cursor = conn.cursor()
-        
-        for backed_out_hash in backed_out_hashes:
-            try:
+    attempt = 0
+
+    while True:
+        attempt += 1
+        updated_count = 0
+        conn = None
+        cursor = None
+        try:
+            conn = pyodbc.connect(CONN_STR)
+            cursor = conn.cursor()
+
+            for backed_out_hash in backed_out_hashes:
                 # Update the backed_out flag
                 update_query = '''
                     UPDATE [dbo].[Changesets]
@@ -696,7 +855,7 @@ def update_backed_out_changesets_in_db(backout_changeset_hash, backed_out_hashes
                     WHERE [Hash_Id] = ?
                 '''
                 cursor.execute(update_query, backed_out_hash)
-                
+
                 # Add 'Backed Out By' property (check if it already exists first)
                 check_query = '''
                     SELECT COUNT(*)
@@ -707,31 +866,28 @@ def update_backed_out_changesets_in_db(backout_changeset_hash, backed_out_hashes
                 '''
                 cursor.execute(check_query, backed_out_hash, backout_changeset_hash)
                 exists = cursor.fetchone()[0] > 0
-                
+
                 if not exists:
                     cursor.execute(INSERT_PROPERTY_QUERY, backed_out_hash, 'Backed Out By', backout_changeset_hash)
-                
+
                 updated_count += 1
-                
-            except Exception as e:
-                print(f"\n[{strftime('%H:%M:%S', localtime())}] [WARNING] Failed to update backed-out changeset {backed_out_hash}: {e}")
-                continue
-        
-        conn.commit()
-        cursor.close()
-        conn.close()
-        
-        return updated_count
-        
-    except Exception as e:
-        print(f"\n[{strftime('%H:%M:%S', localtime())}] [ERROR] Database error in update_backed_out_changesets_in_db: {e}")
-        try:
-            conn.rollback()
+
+            conn.commit()
             cursor.close()
             conn.close()
-        except:
-            pass
-        return updated_count
+
+            return updated_count
+
+        except Exception as e:
+            print(f"\n[{strftime('%H:%M:%S', localtime())}] [ERROR] Database error in update_backed_out_changesets_in_db (attempt {attempt}): {e}")
+            if conn:
+                conn.rollback()
+            if cursor:
+                cursor.close()
+            if conn:
+                conn.close()
+            print(f"[{strftime('%H:%M:%S', localtime())}] [INFO] Retrying local DB update in {LOCAL_RETRY_DELAY_SECONDS}s...")
+            sleep(LOCAL_RETRY_DELAY_SECONDS)
 
 
 def update_changeset_in_db(changeset_details, backed_out_by_list):
@@ -745,98 +901,138 @@ def update_changeset_in_db(changeset_details, backed_out_by_list):
     Returns:
         bool: Success status
     """
-    try:
-        conn = pyodbc.connect(CONN_STR)
-        cursor = conn.cursor()
-        
-        hash_id = changeset_details['hash_id']
-        is_merge = changeset_details['is_merge']
-        is_backout_changeset = changeset_details['is_backout_changeset']
-        backed_out = len(backed_out_by_list) > 0
-        description = changeset_details.get('description', '')
-        
-        # Update Changesets table
-        cursor.execute(
-            UPDATE_CHANGESET_QUERY,
-            is_merge,
-            backed_out,
-            is_backout_changeset,
-            description,
-            hash_id
-        )
-        
-        # Delete existing properties for this changeset (to avoid duplicates)
-        cursor.execute(DELETE_PROPERTIES_QUERY, hash_id)
-        
-        # Insert parent changesets
-        for parent_hash in changeset_details['parents']:
-            cursor.execute(INSERT_PROPERTY_QUERY, hash_id, 'Parent Changeset', parent_hash)
-        
-        # Insert child changesets
-        for child_hash in changeset_details['children']:
-            cursor.execute(INSERT_PROPERTY_QUERY, hash_id, 'Child Changeset', child_hash)
-        
-        # Insert backed out changesets (if this is a backout changeset)
-        for backed_out_hash in changeset_details['backed_out_changesets']:
-            cursor.execute(INSERT_PROPERTY_QUERY, hash_id, 'Backout Changeset', backed_out_hash)
-        
-        # Insert backed out by changesets (if this was backed out)
-        for backed_out_by_hash in backed_out_by_list:
-            cursor.execute(INSERT_PROPERTY_QUERY, hash_id, 'Backed Out By', backed_out_by_hash)
-        
-        # Insert bug IDs mentioned in the description
-        bug_ids = changeset_details.get('bug_ids', [])
-        for bug_id in bug_ids:
-            cursor.execute(INSERT_PROPERTY_QUERY, hash_id, 'Bug ID Mentioned', bug_id)
-        
-        conn.commit()
-        cursor.close()
-        conn.close()
-        
-        return True
-        
-    except Exception as e:
-        print(f"[{strftime('%H:%M:%S', localtime())}] [ERROR] Failed to update {hash_id}: {e}")
+    hash_id = changeset_details.get('hash_id', 'UNKNOWN_HASH')
+    attempt = 0
+
+    while True:
+        attempt += 1
+        conn = None
+        cursor = None
         try:
-            conn.rollback()
+            conn = pyodbc.connect(CONN_STR)
+            cursor = conn.cursor()
+
+            is_merge = changeset_details['is_merge']
+            is_backout_changeset = changeset_details['is_backout_changeset']
+            backed_out = len(backed_out_by_list) > 0
+            description = changeset_details.get('description', '')
+
+            # Update Changesets table
+            cursor.execute(
+                UPDATE_CHANGESET_QUERY,
+                is_merge,
+                backed_out,
+                is_backout_changeset,
+                description,
+                hash_id
+            )
+
+            # Delete existing properties for this changeset (to avoid duplicates)
+            cursor.execute(DELETE_PROPERTIES_QUERY, hash_id)
+
+            # Insert parent changesets
+            for parent_hash in changeset_details['parents']:
+                cursor.execute(INSERT_PROPERTY_QUERY, hash_id, 'Parent Changeset', parent_hash)
+
+            # Insert child changesets
+            for child_hash in changeset_details['children']:
+                cursor.execute(INSERT_PROPERTY_QUERY, hash_id, 'Child Changeset', child_hash)
+
+            # Insert backed out changesets (if this is a backout changeset)
+            for backed_out_hash in changeset_details['backed_out_changesets']:
+                cursor.execute(INSERT_PROPERTY_QUERY, hash_id, 'Backout Changeset', backed_out_hash)
+
+            # Insert backed out by changesets (if this was backed out)
+            for backed_out_by_hash in backed_out_by_list:
+                cursor.execute(INSERT_PROPERTY_QUERY, hash_id, 'Backed Out By', backed_out_by_hash)
+
+            # Insert bug IDs mentioned in the description
+            bug_ids = changeset_details.get('bug_ids', [])
+            for bug_id in bug_ids:
+                cursor.execute(INSERT_PROPERTY_QUERY, hash_id, 'Bug ID Mentioned', bug_id)
+
+            conn.commit()
             cursor.close()
             conn.close()
-        except:
-            pass
-        return False
+
+            return True
+
+        except Exception as e:
+            print(f"[{strftime('%H:%M:%S', localtime())}] [ERROR] Failed to update {hash_id} (attempt {attempt}): {e}")
+            if conn:
+                conn.rollback()
+            if cursor:
+                cursor.close()
+            if conn:
+                conn.close()
+            print(f"[{strftime('%H:%M:%S', localtime())}] [INFO] Retrying local DB write in {LOCAL_RETRY_DELAY_SECONDS}s...")
+            sleep(LOCAL_RETRY_DELAY_SECONDS)
 
 
-def get_changesets_from_db():
+def get_changesets_from_db(start_hash_id=None, end_hash_id=None):
     """
-    Get all changeset hashes from the database.
+    Get all changeset hashes from the database that need processing.
+    
+    Args:
+        start_hash_id: Starting Hash_Id (inclusive), None for no lower bound
+        end_hash_id: Ending Hash_Id (inclusive), None for no upper bound
     
     Returns:
-        list: List of changeset hashes
+        list: List of changeset hashes in the specified range
     """
-    try:
-        conn = pyodbc.connect(CONN_STR)
-        cursor = conn.cursor()
-        
-        cursor.execute(GET_ALL_CHANGESETS_QUERY)
-        changesets = [row[0] for row in cursor.fetchall()]
-        
-        cursor.close()
-        conn.close()
-        
-        return changesets
-        
-    except Exception as e:
-        print(f"[{strftime('%H:%M:%S', localtime())}] [ERROR] Failed to get changesets from database: {e}")
-        return []
+    use_range = (start_hash_id is not None and end_hash_id is not None)
+    
+    attempt = 0
+
+    while True:
+        attempt += 1
+        conn = None
+        cursor = None
+        try:
+            conn = pyodbc.connect(CONN_STR)
+            cursor = conn.cursor()
+
+            if use_range:
+                # Range mode: filter by Hash_Id range
+                cursor.execute(GET_CHANGESETS_RANGE_QUERY, (start_hash_id, end_hash_id))
+            else:
+                # All mode: fetch all unprocessed
+                cursor.execute(GET_ALL_CHANGESETS_QUERY)
+
+            changesets = [row[0] for row in cursor.fetchall()]
+
+            cursor.close()
+            conn.close()
+
+            return changesets
+
+        except Exception as e:
+            print(f"[{strftime('%H:%M:%S', localtime())}] [ERROR] Failed to get changesets from database (attempt {attempt}): {e}")
+            if cursor:
+                cursor.close()
+            if conn:
+                conn.close()
+            print(f"[{strftime('%H:%M:%S', localtime())}] [INFO] Retrying local DB read in {LOCAL_RETRY_DELAY_SECONDS}s...")
+            sleep(LOCAL_RETRY_DELAY_SECONDS)
 
 
-def process_all_changesets():
+def process_all_changesets(start_hash_id=None, end_hash_id=None):
     """
     Process all changesets from the database and extract detailed information.
     Uses on-demand batch queries for crash recovery and lower memory usage.
+    
+    Args:
+        start_hash_id: Starting Hash_Id (inclusive), None for no lower bound
+        end_hash_id: Ending Hash_Id (inclusive), None for no upper bound
     """
+    use_range = (start_hash_id is not None and end_hash_id is not None)
+    
     print("=" * 80)
-    print(f"[{strftime('%H:%M:%S', localtime())}] CHANGESET DETAILS EXTRACTOR - LOCAL MERCURIAL VERSION (BATCH MODE)")
+    if use_range:
+        print(f"[{strftime('%H:%M:%S', localtime())}] CHANGESET DETAILS EXTRACTOR - LOCAL MERCURIAL VERSION [RANGE MODE]")
+        print(f"Processing Hash_Id range: {start_hash_id} to {end_hash_id}")
+    else:
+        print(f"[{strftime('%H:%M:%S', localtime())}] CHANGESET DETAILS EXTRACTOR - LOCAL MERCURIAL VERSION [ALL RECORDS]")
     print("=" * 80)
     print(f"[{strftime('%H:%M:%S', localtime())}] Repository:       {REPO_PATH}")
     print(f"[{strftime('%H:%M:%S', localtime())}] Batch size:       {BATCH_SIZE} (commits to DB after each batch)")
@@ -846,14 +1042,20 @@ def process_all_changesets():
     
     # Count total changesets to process
     print(f"\n[{strftime('%H:%M:%S', localtime())}] [STEP 1/3] Counting changesets to process...")
-    all_changesets = get_changesets_from_db()
+    all_changesets = get_changesets_from_db(start_hash_id, end_hash_id)
     
     if not all_changesets:
-        print(f"[{strftime('%H:%M:%S', localtime())}] [INFO] No unprocessed changesets found (all have Description populated)")
+        if use_range:
+            print(f"[{strftime('%H:%M:%S', localtime())}] [INFO] No unprocessed changesets found in range {start_hash_id} to {end_hash_id}")
+        else:
+            print(f"[{strftime('%H:%M:%S', localtime())}] [INFO] No unprocessed changesets found (all have Description populated)")
         return
     
     total_changesets = len(all_changesets)
-    print(f"[{strftime('%H:%M:%S', localtime())}] [INFO] Found {total_changesets:,} changesets to process")
+    if use_range:
+        print(f"[{strftime('%H:%M:%S', localtime())}] [INFO] Found {total_changesets:,} changesets to process in range {start_hash_id[:12]}...{end_hash_id[:12]}")
+    else:
+        print(f"[{strftime('%H:%M:%S', localtime())}] [INFO] Found {total_changesets:,} changesets to process")
     print(f"[{strftime('%H:%M:%S', localtime())}] [INFO] Estimated time: {total_changesets * 3 / 3600:.1f} - {total_changesets * 5 / 3600:.1f} hours")
     
     # Process in batches with on-demand queries
@@ -872,7 +1074,7 @@ def process_all_changesets():
     # Process by repeatedly querying for unprocessed changesets
     while True:
         # Get next batch of unprocessed changesets
-        batch = get_changesets_from_db()
+        batch = get_changesets_from_db(start_hash_id, end_hash_id)
         
         if not batch:
             print(f"[{strftime('%H:%M:%S', localtime())}] [INFO] No more changesets to process")
@@ -890,15 +1092,11 @@ def process_all_changesets():
         batch_backout_map = {}
         batch_processed = 0
         batch_failed = 0
+        batch_total = len(batch)
+        print_progress_bar("Extract", 0, batch_total)
         
         # Extract details for this batch
         for idx, hash_id in enumerate(batch, 1):
-            
-            if idx % PROGRESS_FREQUENCY == 0 or idx == 1:
-                print(f"  [{strftime('%H:%M:%S', localtime())}] Extracting {idx}/{len(batch)} - "
-                      f"OK: {batch_processed}, Failed: {batch_failed}",
-                      end='\r', flush=True)
-            
             details = get_changeset_details(hash_id)
             
             if details:
@@ -918,8 +1116,17 @@ def process_all_changesets():
                         backout_map_global[backed_out_hash].append(hash_id)
             else:
                 batch_failed += 1
-        
-        print()  # New line after progress
+
+            if idx % PROGRESS_FREQUENCY == 0 or idx == batch_total:
+                print_progress_bar("Extract", idx, batch_total)
+
+        normalize_total = len(batch_backout_map)
+        if normalize_total > 0:
+            print_progress_bar("Normalize", normalize_total, normalize_total)
+
+        # Always update extraction totals, even when no details are extracted in this batch
+        total_processed += batch_processed
+        total_failed += batch_failed
         
         # Update database for this batch
         if batch_details:
@@ -928,8 +1135,10 @@ def process_all_changesets():
             batch_updated = 0
             batch_update_failed = 0
             batch_backed_out_updates = 0
+            update_total = len(batch_details)
+            print_progress_bar("DB Update", 0, update_total)
             
-            for hash_id, details in batch_details.items():
+            for update_idx, (hash_id, details) in enumerate(batch_details.items(), 1):
                 # Find if this changeset was backed out (check global map)
                 backed_out_by = find_backed_out_by_changeset(hash_id, backout_map_global, False)
                 
@@ -945,12 +1154,13 @@ def process_all_changesets():
                         batch_backed_out_updates += count
                 else:
                     batch_update_failed += 1
+
+                if update_idx % PROGRESS_FREQUENCY == 0 or update_idx == update_total:
+                    print_progress_bar("DB Update", update_idx, update_total)
             
             print(f"  [{strftime('%H:%M:%S', localtime())}] [BATCH {batch_num}] Complete: {batch_updated} changesets saved ({total_updated + batch_updated}/{total_changesets} total)")
             
             # Update totals
-            total_processed += batch_processed
-            total_failed += batch_failed
             total_updated += batch_updated
             total_backed_out_updates += batch_backed_out_updates
         
@@ -964,7 +1174,10 @@ def process_all_changesets():
     # Final summary
     print(f"\n[{strftime('%H:%M:%S', localtime())}] [STEP 3/3] Final Summary")
     print("=" * 80)
-    print("EXTRACTION SUMMARY")
+    if use_range:
+        print(f"EXTRACTION COMPLETE - RANGE {start_hash_id[:12]}...{end_hash_id[:12]}")
+    else:
+        print("EXTRACTION COMPLETE - ALL RECORDS")
     print("=" * 80)
     print(f"Total changesets:              {total_changesets:,}")
     print(f"Details extracted:             {total_processed:,}")
@@ -1045,8 +1258,8 @@ def process_single_changeset(hash_id):
 if __name__ == "__main__":
     # ========== CONFIGURATION ==========
     
-    # MODE: "all" to process all changesets, "single" to test one changeset
-    MODE = "all"  # "all" or "single"
+    # MODE: "all" to process all changesets, "single" to test one changeset, "range" to use command-line args
+    MODE = "range"  # "all", "single", or "range"
     
     # Debug mode - set to False to reduce log verbosity (only show progress/timing)
     DEBUG_MODE = False
@@ -1064,9 +1277,20 @@ if __name__ == "__main__":
         process_all_changesets()
     elif MODE == "single":
         process_single_changeset(TEST_CHANGESET)
+    elif MODE == "range":
+        # Parse command-line arguments for range-based parallel processing
+        args = parse_arguments()
+        
+        if args.start_hash_id is not None and args.end_hash_id is not None:
+            print(f"\n>>> Running in RANGE mode: Hash_Id {args.start_hash_id} to {args.end_hash_id}")
+            process_all_changesets(start_hash_id=args.start_hash_id, end_hash_id=args.end_hash_id)
+        else:
+            # Process all unprocessed changesets
+            print("\n>>> Running in ALL RECORDS mode")
+            process_all_changesets()
     else:
         print(f"[{strftime('%H:%M:%S', localtime())}] [ERROR] Invalid MODE: {MODE}")
-        print(f"[{strftime('%H:%M:%S', localtime())}] Valid modes: 'all' or 'single'")
+        print(f"[{strftime('%H:%M:%S', localtime())}] Valid modes: 'all', 'single', or 'range'")
         sys.exit(1)
     
     print(f"\n[{strftime('%H:%M:%S', localtime())}] Script completed. Exiting.")

@@ -194,14 +194,15 @@ CREATE TABLE [dbo].[HgGit_Mappings](
 	[Git_Commit_ID] [varchar](40) NOT NULL,
  CONSTRAINT [PK_HgGit_Mappings] PRIMARY KEY CLUSTERED 
 (
-	[Hg_Changeset_ID] ASC
+	[Hg_Changeset_ID] ASC,
+	[Git_Commit_ID] ASC
 )WITH (PAD_INDEX = OFF, STATISTICS_NORECOMPUTE = OFF, IGNORE_DUP_KEY = OFF, ALLOW_ROW_LOCKS = ON, ALLOW_PAGE_LOCKS = ON, OPTIMIZE_FOR_SEQUENTIAL_KEY = OFF) ON [PRIMARY]
 ) ON [PRIMARY]
+GO
 
 ------------------------------------------------------------------------
 
 12) Running `HgGitMapper.py` to collect the mapping between Hg Changeset ID and Git Commit ID.
---> This may take a while
 
 ------------------------------------------------------------------------
 
@@ -463,18 +464,260 @@ update GitCommitList set backed_out=null, is_backout_commit=null, [Description]=
 delete from GitCommit_Properties where [Name] <> 'Parent ID';
 ```
 
-------------------------------------------------------------------------
+IMPORTANT - Performance: For this steps, I want to divide tasks among 20 processes, and to prevent deadlock or sharing critical resources, I create 20 .git folders using the following PS script:
 
+	$source = 'C:\Users\quocb\quocbui\Studies\research\GithubRepo\firefox'
+	$workersRoot = 'C:\Users\quocb\quocbui\Studies\research\GithubRepo\firefox_workers'
+	New-Item -ItemType Directory -Force -Path $workersRoot | Out-Null
 
+	1..20 | ForEach-Object {
+		$n = $_
+		$dst = Join-Path $workersRoot ("firefox-worker-{0:D2}" -f $n)
+		if (-not (Test-Path $dst)) {
+			git clone --shared --no-checkout $source $dst
+		}
+	}
 
+I also create 20 copies of tables [GitCommitList] and [GitCommit_Properties] and copies data over among those tables. Note that, I won't touch their original tables. Here is an example of create a copy:
+
+	CREATE TABLE [dbo].[GitCommitList_3](
+		[Git_Commit_ID] [varchar](40) NOT NULL,
+		[Date] [datetime] NULL,
+		[Message] [varchar](max) NULL,
+		[is_merge] [bit] NOT NULL,
+		[backed_out] [bit] NULL,
+		[is_backout_commit] [bit] NULL,
+		[Description] [varchar](max) NULL,
+	 CONSTRAINT [PK_GitCommitList_3] PRIMARY KEY CLUSTERED 
+	(
+		[Git_Commit_ID] ASC
+	)WITH (PAD_INDEX = OFF, STATISTICS_NORECOMPUTE = OFF, IGNORE_DUP_KEY = OFF, ALLOW_ROW_LOCKS = ON, ALLOW_PAGE_LOCKS = ON, OPTIMIZE_FOR_SEQUENTIAL_KEY = OFF) ON [PRIMARY]
+	) ON [PRIMARY] TEXTIMAGE_ON [PRIMARY]
+	GO;
+	-- delete from [GitCommitList_3];
+	INSERT INTO [dbo].[GitCommitList_3]
+			   ([Git_Commit_ID]
+			   ,[Date]
+			   ,[Message]
+			   ,[is_merge]
+			   ,[backed_out]
+			   ,[is_backout_commit]
+			   ,[Description])
+	select [Git_Commit_ID]
+		,[Date]
+		,[Message]
+		,[is_merge]
+		,[backed_out]
+		,[is_backout_commit]
+		,[Description]
+	from [GitCommitList]
+	where Git_Commit_ID >= '19913513b11917d9f63e21dc998623da68cebc30' and Git_Commit_ID <= '265c36385d525e4eb9b5fd81481aa84b89dc773c'
+	GO;
+	CREATE TABLE [dbo].[GitCommit_Properties_3](
+		[Unique_ID]  AS (hashbytes('SHA2_256',concat([Git_Commit_ID],[Name],[Value]))) PERSISTED NOT NULL,
+		[Git_Commit_ID] [varchar](40) NOT NULL,
+		[Name] [varchar](100) NOT NULL,
+		[Value] [varchar](5000) NOT NULL,
+	 CONSTRAINT [PK_GitCommit_Properties_3] PRIMARY KEY CLUSTERED 
+	(
+		[Unique_ID] ASC
+	)WITH (PAD_INDEX = OFF, STATISTICS_NORECOMPUTE = OFF, IGNORE_DUP_KEY = OFF, ALLOW_ROW_LOCKS = ON, ALLOW_PAGE_LOCKS = ON, OPTIMIZE_FOR_SEQUENTIAL_KEY = OFF) ON [PRIMARY]
+	) ON [PRIMARY]
+	GO
+	
+Then for each of the 20 processes (PowerShell window), I run following script:
+	cls; cd C:\Users\quocb\quocbui\Studies\research\GithubRepo\requirement_descriptions_and_bug_counts\Mozilla; ..\venv311\Scripts\Activate.ps1; python .\GitCommitsDetailsExtractor.py --table-number 3 --repo-path C:\Users\quocb\quocbui\Studies\research\GithubRepo\firefox_workers\firefox-worker-03 19913513b11917d9f63e21dc998623da68cebc30 265c36385d525e4eb9b5fd81481aa84b89dc773c
+	
+After all 20 processes have been completed. I need to merge all the data together and migrate them back into original tables. Lastly, I delete all copies of .git and tables.
 ------------------------------------------------------------------------
 
 **) Implement the script to extract modified function and files
 
+CREATE TABLE [dbo].[Modified_Functions](
+	[Unique_Hash]  AS (hashbytes('SHA2_256',concat([Modified_File_Unique_Hash],[Function_Name],[Function_Arguments]))),
+	[Modified_File_Unique_Hash] [varbinary](50) NOT NULL,
+	[Function_Name] [varchar](1000) NOT NULL,
+	[Function_Arguments] [varchar](5000) NOT NULL,
+ CONSTRAINT [PK_Modified_Functions] UNIQUE CLUSTERED 
+(
+	[Unique_Hash] ASC
+)WITH (PAD_INDEX = OFF, STATISTICS_NORECOMPUTE = OFF, IGNORE_DUP_KEY = OFF, ALLOW_ROW_LOCKS = ON, ALLOW_PAGE_LOCKS = ON, OPTIMIZE_FOR_SEQUENTIAL_KEY = OFF) ON [PRIMARY]
+) ON [PRIMARY]
+
+CREATE TABLE [dbo].[Modified_Files](
+	[Git_commit_ID] [varchar](40) NOT NULL,
+	[Previous_File_Name] [varchar](1000) NOT NULL,
+	[Updated_File_Name] [varchar](1000) NOT NULL,
+	[File_Type] [varchar](20) NOT NULL,
+	[File_Status] [varchar](100) NOT NULL,
+	[Unique_Hash]  AS (hashbytes('SHA2_256',concat([Git_commit_ID],[Previous_File_Name],[Updated_File_Name], [File_Type], [File_Status]))) PERSISTED,
+ CONSTRAINT [PK_Modified_Files] UNIQUE CLUSTERED 
+(
+	[Unique_Hash] ASC
+)WITH (PAD_INDEX = OFF, STATISTICS_NORECOMPUTE = OFF, IGNORE_DUP_KEY = OFF, ALLOW_ROW_LOCKS = ON, ALLOW_PAGE_LOCKS = ON, OPTIMIZE_FOR_SEQUENTIAL_KEY = OFF) ON [PRIMARY]
+) ON [PRIMARY]
+
+------------------------------------------------------------------------
+
+**) Run scripts to auto-generated 20 tables [Modified_Functions] and [Modified_Files]:
+
+SET NOCOUNT ON;
+SET XACT_ABORT ON;
+
+DECLARE @i int = 1;
+DECLARE @sql nvarchar(max);
+DECLARE @auto_fix_incompatible bit = 1; -- 1 = drop/recreate incompatible shard tables if empty
+
+WHILE @i <= 20
+BEGIN
+    DECLARE @filesTable sysname = N'Modified_Files_' + CAST(@i as nvarchar(10));
+    DECLARE @funcsTable sysname = N'Modified_Functions_' + CAST(@i as nvarchar(10));
+
+    DECLARE @pkFilesName sysname = N'PK_Modified_Files_' + CAST(@i as nvarchar(10));
+    DECLARE @fkFuncsToFilesName sysname = N'FK_Modified_Functions_' + CAST(@i as nvarchar(10)) + N'_Modified_Files_' + CAST(@i as nvarchar(10));
+
+    /* 0) Optional auto-fix for previously created incompatible schema */
+    IF OBJECT_ID(N'[dbo].[' + @filesTable + N']', N'U') IS NOT NULL
+    BEGIN
+        DECLARE @filesHashLen smallint = NULL;
+        DECLARE @filesRows bigint = 0;
+        DECLARE @funcRows bigint = 0;
+
+        SELECT @filesHashLen = c.max_length
+        FROM sys.columns c
+        WHERE c.object_id = OBJECT_ID(N'[dbo].[' + @filesTable + N']', N'U')
+          AND c.name = N'Unique_Hash';
+
+        IF @filesHashLen IS NOT NULL AND @filesHashLen <> 50
+        BEGIN
+            IF @auto_fix_incompatible = 1
+            BEGIN
+                SET @sql = N'SELECT @cnt = COUNT_BIG(1) FROM [dbo].[' + @filesTable + N'];';
+                EXEC sp_executesql @sql, N'@cnt bigint OUTPUT', @cnt = @filesRows OUTPUT;
+
+                IF OBJECT_ID(N'[dbo].[' + @funcsTable + N']', N'U') IS NOT NULL
+                BEGIN
+                    SET @sql = N'SELECT @cnt = COUNT_BIG(1) FROM [dbo].[' + @funcsTable + N'];';
+                    EXEC sp_executesql @sql, N'@cnt bigint OUTPUT', @cnt = @funcRows OUTPUT;
+                END
+
+                IF @filesRows = 0 AND @funcRows = 0
+                BEGIN
+                    IF OBJECT_ID(N'[dbo].[' + @funcsTable + N']', N'U') IS NOT NULL
+                    BEGIN
+                        SET @sql = N'DROP TABLE [dbo].[' + @funcsTable + N'];';
+                        EXEC sp_executesql @sql;
+                        PRINT 'Auto-dropped incompatible empty [dbo].[' + @funcsTable + ']';
+                    END
+
+                    SET @sql = N'DROP TABLE [dbo].[' + @filesTable + N'];';
+                    EXEC sp_executesql @sql;
+                    PRINT 'Auto-dropped incompatible empty [dbo].[' + @filesTable + ']';
+                END
+                ELSE
+                BEGIN
+                    PRINT 'WARNING: Incompatible [dbo].[' + @filesTable + '] exists and is not empty. Skipping auto-drop.';
+                END
+            END
+            ELSE
+            BEGIN
+                PRINT 'WARNING: Incompatible [dbo].[' + @filesTable + '] exists. Set @auto_fix_incompatible = 1 to auto-fix if empty.';
+            END
+        END
+    END
+
+    /* 1) Create Modified_Files_<n> */
+    IF OBJECT_ID(N'[dbo].[' + @filesTable + N']', N'U') IS NULL
+    BEGIN
+        SET @sql = N'
+        CREATE TABLE [dbo].[' + @filesTable + N'](
+            [Git_commit_ID] [varchar](40) NOT NULL,
+            [Previous_File_Name] [varchar](1000) NOT NULL,
+            [Updated_File_Name] [varchar](1000) NOT NULL,
+            [File_Status] [varchar](100) NOT NULL,
+            [Unique_Hash] AS (
+                CONVERT([varbinary](50), hashbytes(''SHA2_256'', concat([Git_commit_ID], [Previous_File_Name], [Updated_File_Name], [File_Status])))
+            ) PERSISTED,
+            CONSTRAINT [' + @pkFilesName + N'] UNIQUE CLUSTERED ([Unique_Hash] ASC)
+                WITH (
+                    PAD_INDEX = OFF,
+                    STATISTICS_NORECOMPUTE = OFF,
+                    IGNORE_DUP_KEY = OFF,
+                    ALLOW_ROW_LOCKS = ON,
+                    ALLOW_PAGE_LOCKS = ON,
+                    OPTIMIZE_FOR_SEQUENTIAL_KEY = OFF
+                )
+        ) ON [PRIMARY];
+        ';
+
+        EXEC sp_executesql @sql;
+        PRINT 'Created [dbo].[' + @filesTable + ']';
+    END
+    ELSE
+    BEGIN
+        PRINT 'Skipped (already exists) [dbo].[' + @filesTable + ']';
+    END
+
+    /* 2) Create Modified_Functions_<n> */
+    IF OBJECT_ID(N'[dbo].[' + @funcsTable + N']', N'U') IS NULL
+    BEGIN
+        SET @sql = N'
+        CREATE TABLE [dbo].[' + @funcsTable + N'](
+            [Unique_Hash] AS (
+                CONVERT([varbinary](50), hashbytes(''SHA2_256'', concat([Modified_File_Unique_Hash], [Function_Name])))
+            ),
+            [Modified_File_Unique_Hash] [varbinary](50) NOT NULL,
+            [Function_Name] [varchar](1000) NOT NULL
+        ) ON [PRIMARY];
+        ';
+
+        EXEC sp_executesql @sql;
+        PRINT 'Created [dbo].[' + @funcsTable + ']';
+    END
+    ELSE
+    BEGIN
+        PRINT 'Skipped (already exists) [dbo].[' + @funcsTable + ']';
+    END
+
+    /* 3) Add FK Modified_Functions_<n> -> Modified_Files_<n> */
+    IF OBJECT_ID(N'[dbo].[' + @funcsTable + N']', N'U') IS NOT NULL
+       AND OBJECT_ID(N'[dbo].[' + @filesTable + N']', N'U') IS NOT NULL
+       AND NOT EXISTS (
+            SELECT 1
+            FROM sys.foreign_keys
+            WHERE [name] = @fkFuncsToFilesName
+       )
+    BEGIN
+        SET @sql = N'
+        ALTER TABLE [dbo].[' + @funcsTable + N'] WITH CHECK
+        ADD CONSTRAINT [' + @fkFuncsToFilesName + N']
+        FOREIGN KEY([Modified_File_Unique_Hash])
+        REFERENCES [dbo].[' + @filesTable + N']([Unique_Hash]);
+
+        ALTER TABLE [dbo].[' + @funcsTable + N'] CHECK CONSTRAINT [' + @fkFuncsToFilesName + N'];
+        ';
+
+        EXEC sp_executesql @sql;
+        PRINT 'Added FK [' + @fkFuncsToFilesName + ']';
+    END
+    ELSE
+    BEGIN
+        PRINT 'Skipped FK (exists or tables missing) [' + @fkFuncsToFilesName + ']';
+    END
+
+    SET @i += 1;
+END
+
+PRINT 'Done creating shard tables for Modified_Files and Modified_Functions.';
+
+------------------------------------------------------------------------
 
 
 
-TODO: Update the HgGitMapper.py so that it will go through `GitCommitList` to convert and Git ID back to Changeset ID.
+
+
+
+TODO: Ensure uniqueness constraints for Modified_Files and Modified_Functions tables
 
 
 
@@ -517,16 +760,16 @@ TODO: Update the HgGitMapper.py so that it will go through `GitCommitList` to co
 
 
 /*
-cls; python .\Mozilla\HgGitMapper.py 06b66a7cf2e14c0c1b0f9099301e5c41e8e0c52f 7155e69bc42c3613901dd356371e5529bf85e855
-cls; python .\Mozilla\HgGitMapper.py 7155ef05668dd63d1b97fe6c9c7e3eb517c9acb3 8123a477b7d7c99c9f62e4fd8dc3896da4624e42
-cls; python .\Mozilla\HgGitMapper.py 8123bbb016f39b30a9727b59718eb98c111523d9 90fda57adf347395f961dc182c7cf8af5d1fec66
-cls; python .\Mozilla\HgGitMapper.py 90fdad28f7366dadce5fe457c08d81a3f5299730 a0de9c43eb2001c035ac9662688e1dd64eaee64c
-cls; python .\Mozilla\HgGitMapper.py a0deba98fde2a86b26c32b33e623ef526a377426 b0b053cb93e554b0b0dc8060d8aa3e01c993b096
-cls; python .\Mozilla\HgGitMapper.py b0b06bae7fd467c6072bdd588ed1173fed6cd68a c07ba1f49f5e52fc62820c11a41e47edd042bced
-cls; python .\Mozilla\HgGitMapper.py c07bafdcc320a6a574e70b7ed6aa1d5c44c83e30 d05d212e53906e90989db0961e5386da884cd280
-cls; python .\Mozilla\HgGitMapper.py d05d2e1fc2a1e6f9decdce457d906e53b89d399e e046475a75cb2dbcce6ebc3cd012efd7385a2142
-cls; python .\Mozilla\HgGitMapper.py e04692266f1754d8eced81a8b8ab5514f4b79722 f01a1eb49c2efde027c33bb85a02f082446c201d
-cls; python .\Mozilla\HgGitMapper.py f01a39a69e9163b5cdb037aecdbf181577c809a0 ffffedfff05367408d7796370a9fc78ad2d0aa14
+cls; .\venv311\Scripts\Activate.ps1; python .\Mozilla\HgGitMapper.py 06b66a7cf2e14c0c1b0f9099301e5c41e8e0c52f 7155e69bc42c3613901dd356371e5529bf85e855
+cls; .\venv311\Scripts\Activate.ps1; python .\Mozilla\HgGitMapper.py 7155ef05668dd63d1b97fe6c9c7e3eb517c9acb3 8123a477b7d7c99c9f62e4fd8dc3896da4624e42
+cls; .\venv311\Scripts\Activate.ps1; python .\Mozilla\HgGitMapper.py 8123bbb016f39b30a9727b59718eb98c111523d9 90fda57adf347395f961dc182c7cf8af5d1fec66
+cls; .\venv311\Scripts\Activate.ps1; python .\Mozilla\HgGitMapper.py 90fdad28f7366dadce5fe457c08d81a3f5299730 a0de9c43eb2001c035ac9662688e1dd64eaee64c
+cls; .\venv311\Scripts\Activate.ps1; python .\Mozilla\HgGitMapper.py a0deba98fde2a86b26c32b33e623ef526a377426 b0b053cb93e554b0b0dc8060d8aa3e01c993b096
+cls; .\venv311\Scripts\Activate.ps1; python .\Mozilla\HgGitMapper.py b0b06bae7fd467c6072bdd588ed1173fed6cd68a c07ba1f49f5e52fc62820c11a41e47edd042bced
+cls; .\venv311\Scripts\Activate.ps1; python .\Mozilla\HgGitMapper.py c07bafdcc320a6a574e70b7ed6aa1d5c44c83e30 d05d212e53906e90989db0961e5386da884cd280
+cls; .\venv311\Scripts\Activate.ps1; python .\Mozilla\HgGitMapper.py d05d2e1fc2a1e6f9decdce457d906e53b89d399e e046475a75cb2dbcce6ebc3cd012efd7385a2142
+cls; .\venv311\Scripts\Activate.ps1; python .\Mozilla\HgGitMapper.py e04692266f1754d8eced81a8b8ab5514f4b79722 f01a1eb49c2efde027c33bb85a02f082446c201d
+cls; .\venv311\Scripts\Activate.ps1; python .\Mozilla\HgGitMapper.py f01a39a69e9163b5cdb037aecdbf181577c809a0 ffffedfff05367408d7796370a9fc78ad2d0aa14
 */
 
 select * from [Changeset_Properties] order by [Hg_Changeset_ID]
@@ -566,20 +809,134 @@ where [Description] is not null
 delete from GitCommit_Properties where [Name] <> 'Parent ID';
 --*/
 
-select top 100 * from dbo.GitCommitList
-where [Description] is not null
-	or backed_out is not null
-	or is_backout_commit is not null;
 
-select top 100 *
-from GitCommit_Properties
-where Name <> 'Parent ID'
+select count(*)
+from GitCommitList
+where backed_out is not null
+or is_backout_commit is not null
+or Description is not null;
 
-select *
-from HgGit_Mappings
-where Git_Commit_ID like '09785dc4c5aa%'
-	or Hg_Changeset_ID like '09785dc4c5aa%'
+select count(*) from GitCommit_Properties where [Name] <> 'Parent ID'
 
-select top 100 *
-from dbo.GitCommitList
-where Git_Commit_ID='dd3b59eb2918683a3780fb9c57c423350277482d'
+select count(*) from GitCommitList where [Description] is null;
+
+
+
+/* Tasks for running: GitCommitsDetailsExtractor.py
+hg log -r 0334ef8f35936652177399455de986837245a7c6 --debug --cwd C:\Users\quocb\quocbui\Studies\research\GithubRepo\firefox_mercurial
+
+950,351 / 20 tasks = 47,517.55
+
+1)
+cls; cd C:\Users\quocb\quocbui\Studies\research\GithubRepo\requirement_descriptions_and_bug_counts\Mozilla; ..\venv311\Scripts\Activate.ps1; python .\GitModifiedFilesFunctionsExtractor.py --table-number 1 --repo-path C:\Users\quocb\quocbui\Studies\research\GithubRepo\firefox_workers\firefox-worker-01 00000163a890eb9f05f98c4084cd07846aa7cbf0 0cc73f8e55a9781a93769b17be8a0571064430b7
+
+2)
+cls; cd C:\Users\quocb\quocbui\Studies\research\GithubRepo\requirement_descriptions_and_bug_counts\Mozilla; ..\venv311\Scripts\Activate.ps1; python .\GitModifiedFilesFunctionsExtractor.py --table-number 2 --repo-path C:\Users\quocb\quocbui\Studies\research\GithubRepo\firefox_workers\firefox-worker-02 0cc74bd4fdf7264f9d9bb6fe22f9691f8b5ca329 19912dd349bc1ea6e10719d7366cfd233dc483e9
+
+3)
+cls; cd C:\Users\quocb\quocbui\Studies\research\GithubRepo\requirement_descriptions_and_bug_counts\Mozilla; ..\venv311\Scripts\Activate.ps1; python .\GitModifiedFilesFunctionsExtractor.py --table-number 3 --repo-path C:\Users\quocb\quocbui\Studies\research\GithubRepo\firefox_workers\firefox-worker-03 19913513b11917d9f63e21dc998623da68cebc30 265c36385d525e4eb9b5fd81481aa84b89dc773c
+
+4)
+cls; cd C:\Users\quocb\quocbui\Studies\research\GithubRepo\requirement_descriptions_and_bug_counts\Mozilla; ..\venv311\Scripts\Activate.ps1; python .\GitModifiedFilesFunctionsExtractor.py --table-number 4 --repo-path C:\Users\quocb\quocbui\Studies\research\GithubRepo\firefox_workers\firefox-worker-04 265c42d16f47111316f6a79e5308a0d6ac5d9f71 334746cbcbd83d2bea6bf70ba1227f5a096182ad
+
+5)
+cls; cd C:\Users\quocb\quocbui\Studies\research\GithubRepo\requirement_descriptions_and_bug_counts\Mozilla; ..\venv311\Scripts\Activate.ps1; python .\GitModifiedFilesFunctionsExtractor.py --table-number 5 --repo-path C:\Users\quocb\quocbui\Studies\research\GithubRepo\firefox_workers\firefox-worker-05 334747c45b1c6eb1010d8e30127ffc2d27436466 40185bf58a4c36b05414012f8a8cf93591df0318
+
+
+6)
+cls; cd C:\Users\quocb\quocbui\Studies\research\GithubRepo\requirement_descriptions_and_bug_counts\Mozilla; ..\venv311\Scripts\Activate.ps1; python .\GitModifiedFilesFunctionsExtractor.py --table-number 6 --repo-path C:\Users\quocb\quocbui\Studies\research\GithubRepo\firefox_workers\firefox-worker-06 4018908a051075d4f4b86bbea444f95ce6606720 4ccc349d24391ff087f82b6ab7fd7a33bd934580
+
+
+7)
+cls; cd C:\Users\quocb\quocbui\Studies\research\GithubRepo\requirement_descriptions_and_bug_counts\Mozilla; ..\venv311\Scripts\Activate.ps1; python .\GitModifiedFilesFunctionsExtractor.py --table-number 7 --repo-path C:\Users\quocb\quocbui\Studies\research\GithubRepo\firefox_workers\firefox-worker-07 4ccc3b9f19d30a0b97160982ea6bc47c87ffe211 599195b8366698f0ad22fa659d2d65c640d033bd
+
+
+8)
+cls; cd C:\Users\quocb\quocbui\Studies\research\GithubRepo\requirement_descriptions_and_bug_counts\Mozilla; ..\venv311\Scripts\Activate.ps1; python .\GitModifiedFilesFunctionsExtractor.py --table-number 8 --repo-path C:\Users\quocb\quocbui\Studies\research\GithubRepo\firefox_workers\firefox-worker-08 5991ada2f7b96d8632f062e12237c88440987bda 666be0ef8dcd7c551e206f83a149842f58e1e23c
+
+9)
+cls; cd C:\Users\quocb\quocbui\Studies\research\GithubRepo\requirement_descriptions_and_bug_counts\Mozilla; ..\venv311\Scripts\Activate.ps1; python .\GitModifiedFilesFunctionsExtractor.py --table-number 9 --repo-path C:\Users\quocb\quocbui\Studies\research\GithubRepo\firefox_workers\firefox-worker-09 666be89e13cfe3653580964b167a44526d9430ed 73253276b1fde5042ee80f2ca522099c1fd317b3
+
+10)
+cls; cd C:\Users\quocb\quocbui\Studies\research\GithubRepo\requirement_descriptions_and_bug_counts\Mozilla; ..\venv311\Scripts\Activate.ps1; python .\GitModifiedFilesFunctionsExtractor.py --table-number 10 --repo-path C:\Users\quocb\quocbui\Studies\research\GithubRepo\firefox_workers\firefox-worker-10 73253dc56e1a2200022348d7826c9e2ce561f9cf 801618ee73ae05fa6edadb04d497bff36fee557e
+
+11)
+cls; cd C:\Users\quocb\quocbui\Studies\research\GithubRepo\requirement_descriptions_and_bug_counts\Mozilla; ..\venv311\Scripts\Activate.ps1; python .\GitModifiedFilesFunctionsExtractor.py --table-number 11 --repo-path C:\Users\quocb\quocbui\Studies\research\GithubRepo\firefox_workers\firefox-worker-11 801629c58e13d44fe241c870a357bc8863e7904f 8ce103a290d6611d74cfd772bd36b0c1d90258e7
+
+12)
+cls; cd C:\Users\quocb\quocbui\Studies\research\GithubRepo\requirement_descriptions_and_bug_counts\Mozilla; ..\venv311\Scripts\Activate.ps1; python .\GitModifiedFilesFunctionsExtractor.py --table-number 12 --repo-path C:\Users\quocb\quocbui\Studies\research\GithubRepo\firefox_workers\firefox-worker-12 8ce107be1f46128f20ea8cb9b577564cb92d8abb 99b0cd2ece3f5e6f88c5b08e990def54c529f493
+
+13)
+cls; cd C:\Users\quocb\quocbui\Studies\research\GithubRepo\requirement_descriptions_and_bug_counts\Mozilla; ..\venv311\Scripts\Activate.ps1; python .\GitModifiedFilesFunctionsExtractor.py --table-number 13 --repo-path C:\Users\quocb\quocbui\Studies\research\GithubRepo\firefox_workers\firefox-worker-13 99b0d82c4a92a28d894d4106cb03b8bc514b9313 a689ea0aceca7a9662c7e0fd46a5426072ebebb1
+
+14)
+cls; cd C:\Users\quocb\quocbui\Studies\research\GithubRepo\requirement_descriptions_and_bug_counts\Mozilla; ..\venv311\Scripts\Activate.ps1; python .\GitModifiedFilesFunctionsExtractor.py --table-number 14 --repo-path C:\Users\quocb\quocbui\Studies\research\GithubRepo\firefox_workers\firefox-worker-14 a689ec77573a375fabc69e6953c0822c1999c94a b366260daa2c2a4f963475a8b20f882c7b99518a
+
+15)
+cls; cd C:\Users\quocb\quocbui\Studies\research\GithubRepo\requirement_descriptions_and_bug_counts\Mozilla; ..\venv311\Scripts\Activate.ps1; python .\GitModifiedFilesFunctionsExtractor.py --table-number 15 --repo-path C:\Users\quocb\quocbui\Studies\research\GithubRepo\firefox_workers\firefox-worker-15 b3663a8ea9dc8ed39f9b7a5e2a40ca224008de9e c027beb0e6401896d4147b1f03c993b66bc7592d
+
+16)
+cls; cd C:\Users\quocb\quocbui\Studies\research\GithubRepo\requirement_descriptions_and_bug_counts\Mozilla; ..\venv311\Scripts\Activate.ps1; python .\GitModifiedFilesFunctionsExtractor.py --table-number 16 --repo-path C:\Users\quocb\quocbui\Studies\research\GithubRepo\firefox_workers\firefox-worker-16 c027cced5225557994390115bba3721665c1804c ccde746330af69346a3a8fc30c62d08bf657cde9
+
+17)
+cls; cd C:\Users\quocb\quocbui\Studies\research\GithubRepo\requirement_descriptions_and_bug_counts\Mozilla; ..\venv311\Scripts\Activate.ps1; python .\GitModifiedFilesFunctionsExtractor.py --table-number 17 --repo-path C:\Users\quocb\quocbui\Studies\research\GithubRepo\firefox_workers\firefox-worker-17 ccde7a70c46469b463a441484fd848e5f78c9af2 d9a34378fd785833b17b271b0df249ba092c7148
+
+18)
+cls; cd C:\Users\quocb\quocbui\Studies\research\GithubRepo\requirement_descriptions_and_bug_counts\Mozilla; ..\venv311\Scripts\Activate.ps1; python .\GitModifiedFilesFunctionsExtractor.py --table-number 18 --repo-path C:\Users\quocb\quocbui\Studies\research\GithubRepo\firefox_workers\firefox-worker-18 d9a36ce13afffff8d7f13c5d20a91016585ea9af e66e854db4603995a9b8a2734cddbb883bea1f89
+
+19)
+cls; cd C:\Users\quocb\quocbui\Studies\research\GithubRepo\requirement_descriptions_and_bug_counts\Mozilla; ..\venv311\Scripts\Activate.ps1; python .\GitModifiedFilesFunctionsExtractor.py --table-number 19 --repo-path C:\Users\quocb\quocbui\Studies\research\GithubRepo\firefox_workers\firefox-worker-19 e66e99d799aabb3d4f2707ff0ee3ed95ecdadfe1 f338f202b3caed032def63f433c89f3c324e8f74
+
+20)
+cls; cd C:\Users\quocb\quocbui\Studies\research\GithubRepo\requirement_descriptions_and_bug_counts\Mozilla; ..\venv311\Scripts\Activate.ps1; python .\GitModifiedFilesFunctionsExtractor.py --table-number 20 --repo-path C:\Users\quocb\quocbui\Studies\research\GithubRepo\firefox_workers\firefox-worker-20 f338fe23e2ae8a89165e74c3ac171ee848f86dc9 fffffe7e0e643f1b8d49fc8b79fac6645220e3fb
+
+*/
+
+
+
+SET NOCOUNT ON;
+
+DECLARE @i INT = 1;
+DECLARE @sql NVARCHAR(MAX);
+DECLARE @funcTable SYSNAME;
+DECLARE @fileTable SYSNAME;
+
+BEGIN TRY
+    BEGIN TRAN;
+
+    WHILE @i <= 20
+    BEGIN
+        SET @funcTable = N'dbo.Modified_Functions_' + CAST(@i AS NVARCHAR(10));
+        SET @fileTable = N'dbo.Modified_Files_' + CAST(@i AS NVARCHAR(10));
+
+        -- Delete child rows first (if FK exists)
+        IF OBJECT_ID(@funcTable, 'U') IS NOT NULL
+        BEGIN
+            SET @sql = N'DELETE FROM ' + QUOTENAME('dbo') + N'.' + QUOTENAME(N'Modified_Functions_' + CAST(@i AS NVARCHAR(10))) + N';';
+            EXEC sp_executesql @sql;
+            PRINT N'Cleared ' + @funcTable;
+        END
+        ELSE
+            PRINT N'Skipped (not found): ' + @funcTable;
+
+        IF OBJECT_ID(@fileTable, 'U') IS NOT NULL
+        BEGIN
+            SET @sql = N'DELETE FROM ' + QUOTENAME('dbo') + N'.' + QUOTENAME(N'Modified_Files_' + CAST(@i AS NVARCHAR(10))) + N';';
+            EXEC sp_executesql @sql;
+            PRINT N'Cleared ' + @fileTable;
+        END
+        ELSE
+            PRINT N'Skipped (not found): ' + @fileTable;
+
+        SET @i += 1;
+    END
+
+    COMMIT TRAN;
+    PRINT N'All shard tables processed.';
+END TRY
+BEGIN CATCH
+    IF @@TRANCOUNT > 0
+        ROLLBACK TRAN;
+
+    THROW;
+END CATCH;
