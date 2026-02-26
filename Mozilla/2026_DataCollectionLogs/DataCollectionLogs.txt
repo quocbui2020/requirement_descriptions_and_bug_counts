@@ -531,14 +531,14 @@ Then for each of the 20 processes (PowerShell window), I run following script:
 After all 20 processes have been completed. I need to merge all the data together and migrate them back into original tables. Lastly, I delete all copies of .git and tables.
 ------------------------------------------------------------------------
 
-**) Implement the script to extract modified function and files
+**) Create [Modified_Functions] and [Modified_Files]
 
 CREATE TABLE [dbo].[Modified_Functions](
-	[Unique_Hash]  AS (hashbytes('SHA2_256',concat([Modified_File_Unique_Hash],[Function_Name],[Function_Arguments]))),
+    [Unique_Hash]  AS (CONVERT([varbinary](50), hashbytes('SHA2_256',concat([Modified_File_Unique_Hash],[Function_Name],[Function_Arguments])))) PERSISTED,
 	[Modified_File_Unique_Hash] [varbinary](50) NOT NULL,
 	[Function_Name] [varchar](1000) NOT NULL,
 	[Function_Arguments] [varchar](5000) NOT NULL,
- CONSTRAINT [PK_Modified_Functions] UNIQUE CLUSTERED 
+ CONSTRAINT [PK_Modified_Functions] PRIMARY KEY CLUSTERED 
 (
 	[Unique_Hash] ASC
 )WITH (PAD_INDEX = OFF, STATISTICS_NORECOMPUTE = OFF, IGNORE_DUP_KEY = OFF, ALLOW_ROW_LOCKS = ON, ALLOW_PAGE_LOCKS = ON, OPTIMIZE_FOR_SEQUENTIAL_KEY = OFF) ON [PRIMARY]
@@ -550,8 +550,8 @@ CREATE TABLE [dbo].[Modified_Files](
 	[Updated_File_Name] [varchar](1000) NOT NULL,
 	[File_Type] [varchar](20) NOT NULL,
 	[File_Status] [varchar](100) NOT NULL,
-	[Unique_Hash]  AS (hashbytes('SHA2_256',concat([Git_commit_ID],[Previous_File_Name],[Updated_File_Name], [File_Type], [File_Status]))) PERSISTED,
- CONSTRAINT [PK_Modified_Files] UNIQUE CLUSTERED 
+    [Unique_Hash]  AS (CONVERT([varbinary](50), hashbytes('SHA2_256',concat([Git_commit_ID],[Previous_File_Name],[Updated_File_Name], [File_Type], [File_Status])))) PERSISTED,
+ CONSTRAINT [PK_Modified_Files] PRIMARY KEY CLUSTERED 
 (
 	[Unique_Hash] ASC
 )WITH (PAD_INDEX = OFF, STATISTICS_NORECOMPUTE = OFF, IGNORE_DUP_KEY = OFF, ALLOW_ROW_LOCKS = ON, ALLOW_PAGE_LOCKS = ON, OPTIMIZE_FOR_SEQUENTIAL_KEY = OFF) ON [PRIMARY]
@@ -559,156 +559,9 @@ CREATE TABLE [dbo].[Modified_Files](
 
 ------------------------------------------------------------------------
 
-**) Run scripts to auto-generated 20 tables [Modified_Functions] and [Modified_Files]:
+**) Run scripts to auto-generated 20 tables [Modified_Functions_n] and [Modified_Files_n]:
+- Execute script in `MakeCopiesOfModifiedFuncFileTables.sql`
 
-SET NOCOUNT ON;
-SET XACT_ABORT ON;
-
-DECLARE @i int = 1;
-DECLARE @sql nvarchar(max);
-DECLARE @auto_fix_incompatible bit = 1; -- 1 = drop/recreate incompatible shard tables if empty
-
-WHILE @i <= 20
-BEGIN
-    DECLARE @filesTable sysname = N'Modified_Files_' + CAST(@i as nvarchar(10));
-    DECLARE @funcsTable sysname = N'Modified_Functions_' + CAST(@i as nvarchar(10));
-
-    DECLARE @pkFilesName sysname = N'PK_Modified_Files_' + CAST(@i as nvarchar(10));
-    DECLARE @fkFuncsToFilesName sysname = N'FK_Modified_Functions_' + CAST(@i as nvarchar(10)) + N'_Modified_Files_' + CAST(@i as nvarchar(10));
-
-    /* 0) Optional auto-fix for previously created incompatible schema */
-    IF OBJECT_ID(N'[dbo].[' + @filesTable + N']', N'U') IS NOT NULL
-    BEGIN
-        DECLARE @filesHashLen smallint = NULL;
-        DECLARE @filesRows bigint = 0;
-        DECLARE @funcRows bigint = 0;
-
-        SELECT @filesHashLen = c.max_length
-        FROM sys.columns c
-        WHERE c.object_id = OBJECT_ID(N'[dbo].[' + @filesTable + N']', N'U')
-          AND c.name = N'Unique_Hash';
-
-        IF @filesHashLen IS NOT NULL AND @filesHashLen <> 50
-        BEGIN
-            IF @auto_fix_incompatible = 1
-            BEGIN
-                SET @sql = N'SELECT @cnt = COUNT_BIG(1) FROM [dbo].[' + @filesTable + N'];';
-                EXEC sp_executesql @sql, N'@cnt bigint OUTPUT', @cnt = @filesRows OUTPUT;
-
-                IF OBJECT_ID(N'[dbo].[' + @funcsTable + N']', N'U') IS NOT NULL
-                BEGIN
-                    SET @sql = N'SELECT @cnt = COUNT_BIG(1) FROM [dbo].[' + @funcsTable + N'];';
-                    EXEC sp_executesql @sql, N'@cnt bigint OUTPUT', @cnt = @funcRows OUTPUT;
-                END
-
-                IF @filesRows = 0 AND @funcRows = 0
-                BEGIN
-                    IF OBJECT_ID(N'[dbo].[' + @funcsTable + N']', N'U') IS NOT NULL
-                    BEGIN
-                        SET @sql = N'DROP TABLE [dbo].[' + @funcsTable + N'];';
-                        EXEC sp_executesql @sql;
-                        PRINT 'Auto-dropped incompatible empty [dbo].[' + @funcsTable + ']';
-                    END
-
-                    SET @sql = N'DROP TABLE [dbo].[' + @filesTable + N'];';
-                    EXEC sp_executesql @sql;
-                    PRINT 'Auto-dropped incompatible empty [dbo].[' + @filesTable + ']';
-                END
-                ELSE
-                BEGIN
-                    PRINT 'WARNING: Incompatible [dbo].[' + @filesTable + '] exists and is not empty. Skipping auto-drop.';
-                END
-            END
-            ELSE
-            BEGIN
-                PRINT 'WARNING: Incompatible [dbo].[' + @filesTable + '] exists. Set @auto_fix_incompatible = 1 to auto-fix if empty.';
-            END
-        END
-    END
-
-    /* 1) Create Modified_Files_<n> */
-    IF OBJECT_ID(N'[dbo].[' + @filesTable + N']', N'U') IS NULL
-    BEGIN
-        SET @sql = N'
-        CREATE TABLE [dbo].[' + @filesTable + N'](
-            [Git_commit_ID] [varchar](40) NOT NULL,
-            [Previous_File_Name] [varchar](1000) NOT NULL,
-            [Updated_File_Name] [varchar](1000) NOT NULL,
-            [File_Status] [varchar](100) NOT NULL,
-            [Unique_Hash] AS (
-                CONVERT([varbinary](50), hashbytes(''SHA2_256'', concat([Git_commit_ID], [Previous_File_Name], [Updated_File_Name], [File_Status])))
-            ) PERSISTED,
-            CONSTRAINT [' + @pkFilesName + N'] UNIQUE CLUSTERED ([Unique_Hash] ASC)
-                WITH (
-                    PAD_INDEX = OFF,
-                    STATISTICS_NORECOMPUTE = OFF,
-                    IGNORE_DUP_KEY = OFF,
-                    ALLOW_ROW_LOCKS = ON,
-                    ALLOW_PAGE_LOCKS = ON,
-                    OPTIMIZE_FOR_SEQUENTIAL_KEY = OFF
-                )
-        ) ON [PRIMARY];
-        ';
-
-        EXEC sp_executesql @sql;
-        PRINT 'Created [dbo].[' + @filesTable + ']';
-    END
-    ELSE
-    BEGIN
-        PRINT 'Skipped (already exists) [dbo].[' + @filesTable + ']';
-    END
-
-    /* 2) Create Modified_Functions_<n> */
-    IF OBJECT_ID(N'[dbo].[' + @funcsTable + N']', N'U') IS NULL
-    BEGIN
-        SET @sql = N'
-        CREATE TABLE [dbo].[' + @funcsTable + N'](
-            [Unique_Hash] AS (
-                CONVERT([varbinary](50), hashbytes(''SHA2_256'', concat([Modified_File_Unique_Hash], [Function_Name])))
-            ),
-            [Modified_File_Unique_Hash] [varbinary](50) NOT NULL,
-            [Function_Name] [varchar](1000) NOT NULL
-        ) ON [PRIMARY];
-        ';
-
-        EXEC sp_executesql @sql;
-        PRINT 'Created [dbo].[' + @funcsTable + ']';
-    END
-    ELSE
-    BEGIN
-        PRINT 'Skipped (already exists) [dbo].[' + @funcsTable + ']';
-    END
-
-    /* 3) Add FK Modified_Functions_<n> -> Modified_Files_<n> */
-    IF OBJECT_ID(N'[dbo].[' + @funcsTable + N']', N'U') IS NOT NULL
-       AND OBJECT_ID(N'[dbo].[' + @filesTable + N']', N'U') IS NOT NULL
-       AND NOT EXISTS (
-            SELECT 1
-            FROM sys.foreign_keys
-            WHERE [name] = @fkFuncsToFilesName
-       )
-    BEGIN
-        SET @sql = N'
-        ALTER TABLE [dbo].[' + @funcsTable + N'] WITH CHECK
-        ADD CONSTRAINT [' + @fkFuncsToFilesName + N']
-        FOREIGN KEY([Modified_File_Unique_Hash])
-        REFERENCES [dbo].[' + @filesTable + N']([Unique_Hash]);
-
-        ALTER TABLE [dbo].[' + @funcsTable + N'] CHECK CONSTRAINT [' + @fkFuncsToFilesName + N'];
-        ';
-
-        EXEC sp_executesql @sql;
-        PRINT 'Added FK [' + @fkFuncsToFilesName + ']';
-    END
-    ELSE
-    BEGIN
-        PRINT 'Skipped FK (exists or tables missing) [' + @fkFuncsToFilesName + ']';
-    END
-
-    SET @i += 1;
-END
-
-PRINT 'Done creating shard tables for Modified_Files and Modified_Functions.';
 
 ------------------------------------------------------------------------
 
@@ -719,6 +572,119 @@ PRINT 'Done creating shard tables for Modified_Files and Modified_Functions.';
 
 TODO: Ensure uniqueness constraints for Modified_Files and Modified_Functions tables
 
+/* Fix existing tables to have real PK constraints (if they were created with UNIQUE only) */
+SET NOCOUNT ON;
+
+DECLARE @stmt nvarchar(max);
+
+/* Base tables */
+IF OBJECT_ID(N'[dbo].[Modified_Functions]', N'U') IS NOT NULL
+BEGIN
+        IF NOT EXISTS (
+        SELECT 1
+        FROM sys.key_constraints kc
+        WHERE kc.parent_object_id = OBJECT_ID(N'[dbo].[Modified_Functions]')
+          AND kc.[type] = 'PK'
+        )
+    BEGIN
+        IF EXISTS (
+            SELECT 1
+            FROM sys.key_constraints kc
+            WHERE kc.parent_object_id = OBJECT_ID(N'[dbo].[Modified_Functions]')
+              AND kc.[name] = N'PK_Modified_Functions'
+              AND kc.[type] = 'UQ'
+        )
+        BEGIN
+            ALTER TABLE [dbo].[Modified_Functions] DROP CONSTRAINT [PK_Modified_Functions];
+        END
+
+        ALTER TABLE [dbo].[Modified_Functions]
+        ADD CONSTRAINT [PK_Modified_Functions] PRIMARY KEY CLUSTERED ([Unique_Hash] ASC);
+    END
+END
+
+IF OBJECT_ID(N'[dbo].[Modified_Files]', N'U') IS NOT NULL
+BEGIN
+        IF NOT EXISTS (
+        SELECT 1
+        FROM sys.key_constraints kc
+        WHERE kc.parent_object_id = OBJECT_ID(N'[dbo].[Modified_Files]')
+          AND kc.[type] = 'PK'
+        )
+    BEGIN
+        IF EXISTS (
+            SELECT 1
+            FROM sys.key_constraints kc
+            WHERE kc.parent_object_id = OBJECT_ID(N'[dbo].[Modified_Files]')
+              AND kc.[name] = N'PK_Modified_Files'
+              AND kc.[type] = 'UQ'
+        )
+        BEGIN
+            ALTER TABLE [dbo].[Modified_Files] DROP CONSTRAINT [PK_Modified_Files];
+        END
+
+        ALTER TABLE [dbo].[Modified_Files]
+        ADD CONSTRAINT [PK_Modified_Files] PRIMARY KEY CLUSTERED ([Unique_Hash] ASC);
+    END
+END
+
+/* Shard tables */
+DECLARE @j int = 1;
+WHILE @j <= 20
+BEGIN
+    DECLARE @filesT sysname = N'Modified_Files_' + CAST(@j as nvarchar(10));
+    DECLARE @funcsT sysname = N'Modified_Functions_' + CAST(@j as nvarchar(10));
+    DECLARE @pkF sysname = N'PK_Modified_Files_' + CAST(@j as nvarchar(10));
+    DECLARE @pkFn sysname = N'PK_Modified_Functions_' + CAST(@j as nvarchar(10));
+
+    IF OBJECT_ID(N'[dbo].[' + @filesT + N']', N'U') IS NOT NULL
+    BEGIN
+        IF NOT EXISTS (
+            SELECT 1 FROM sys.key_constraints
+            WHERE parent_object_id = OBJECT_ID(N'[dbo].[' + @filesT + N']')
+              AND [type] = 'PK'
+        )
+        BEGIN
+            SET @stmt = N'ALTER TABLE [dbo].[' + @filesT + N'] ADD CONSTRAINT [' + @pkF + N'] PRIMARY KEY CLUSTERED ([Unique_Hash] ASC);';
+            EXEC sp_executesql @stmt;
+        END
+    END
+
+    IF OBJECT_ID(N'[dbo].[' + @funcsT + N']', N'U') IS NOT NULL
+    BEGIN
+        IF NOT EXISTS (
+            SELECT 1 FROM sys.key_constraints
+            WHERE parent_object_id = OBJECT_ID(N'[dbo].[' + @funcsT + N']')
+              AND [type] = 'PK'
+        )
+        BEGIN
+            SET @stmt = N'ALTER TABLE [dbo].[' + @funcsT + N'] ADD CONSTRAINT [' + @pkFn + N'] PRIMARY KEY CLUSTERED ([Unique_Hash] ASC);';
+            EXEC sp_executesql @stmt;
+        END
+    END
+
+    SET @j += 1;
+END
+
+/* Verify */
+SELECT
+    OBJECT_SCHEMA_NAME(kc.parent_object_id) AS [schema_name],
+    OBJECT_NAME(kc.parent_object_id) AS [table_name],
+    kc.[name] AS [constraint_name],
+    kc.[type] AS [constraint_type]
+FROM sys.key_constraints kc
+WHERE OBJECT_NAME(kc.parent_object_id) IN (
+    'Modified_Files', 'Modified_Functions',
+    'Modified_Files_1','Modified_Files_2','Modified_Files_3','Modified_Files_4','Modified_Files_5',
+    'Modified_Files_6','Modified_Files_7','Modified_Files_8','Modified_Files_9','Modified_Files_10',
+    'Modified_Files_11','Modified_Files_12','Modified_Files_13','Modified_Files_14','Modified_Files_15',
+    'Modified_Files_16','Modified_Files_17','Modified_Files_18','Modified_Files_19','Modified_Files_20',
+    'Modified_Functions_1','Modified_Functions_2','Modified_Functions_3','Modified_Functions_4','Modified_Functions_5',
+    'Modified_Functions_6','Modified_Functions_7','Modified_Functions_8','Modified_Functions_9','Modified_Functions_10',
+    'Modified_Functions_11','Modified_Functions_12','Modified_Functions_13','Modified_Functions_14','Modified_Functions_15',
+    'Modified_Functions_16','Modified_Functions_17','Modified_Functions_18','Modified_Functions_19','Modified_Functions_20'
+)
+ORDER BY [table_name], [constraint_type] DESC;
 
 
 
@@ -759,18 +725,7 @@ TODO: Ensure uniqueness constraints for Modified_Files and Modified_Functions ta
 
 
 
-/*
-cls; .\venv311\Scripts\Activate.ps1; python .\Mozilla\HgGitMapper.py 06b66a7cf2e14c0c1b0f9099301e5c41e8e0c52f 7155e69bc42c3613901dd356371e5529bf85e855
-cls; .\venv311\Scripts\Activate.ps1; python .\Mozilla\HgGitMapper.py 7155ef05668dd63d1b97fe6c9c7e3eb517c9acb3 8123a477b7d7c99c9f62e4fd8dc3896da4624e42
-cls; .\venv311\Scripts\Activate.ps1; python .\Mozilla\HgGitMapper.py 8123bbb016f39b30a9727b59718eb98c111523d9 90fda57adf347395f961dc182c7cf8af5d1fec66
-cls; .\venv311\Scripts\Activate.ps1; python .\Mozilla\HgGitMapper.py 90fdad28f7366dadce5fe457c08d81a3f5299730 a0de9c43eb2001c035ac9662688e1dd64eaee64c
-cls; .\venv311\Scripts\Activate.ps1; python .\Mozilla\HgGitMapper.py a0deba98fde2a86b26c32b33e623ef526a377426 b0b053cb93e554b0b0dc8060d8aa3e01c993b096
-cls; .\venv311\Scripts\Activate.ps1; python .\Mozilla\HgGitMapper.py b0b06bae7fd467c6072bdd588ed1173fed6cd68a c07ba1f49f5e52fc62820c11a41e47edd042bced
-cls; .\venv311\Scripts\Activate.ps1; python .\Mozilla\HgGitMapper.py c07bafdcc320a6a574e70b7ed6aa1d5c44c83e30 d05d212e53906e90989db0961e5386da884cd280
-cls; .\venv311\Scripts\Activate.ps1; python .\Mozilla\HgGitMapper.py d05d2e1fc2a1e6f9decdce457d906e53b89d399e e046475a75cb2dbcce6ebc3cd012efd7385a2142
-cls; .\venv311\Scripts\Activate.ps1; python .\Mozilla\HgGitMapper.py e04692266f1754d8eced81a8b8ab5514f4b79722 f01a1eb49c2efde027c33bb85a02f082446c201d
-cls; .\venv311\Scripts\Activate.ps1; python .\Mozilla\HgGitMapper.py f01a39a69e9163b5cdb037aecdbf181577c809a0 ffffedfff05367408d7796370a9fc78ad2d0aa14
-*/
+
 
 select * from [Changeset_Properties] order by [Hg_Changeset_ID]
 
