@@ -54,6 +54,9 @@ Function extraction behavior:
 - Default: PyDriller changed_methods only
 - Optional: add regex-based extraction from diff lines with
     --enable-regex-function-fallback
+- Function extraction is attempted only for code-like file types/extensions
+    (for example C/C++/Header/JavaScript/Python/Java/Kotlin/Rust/Go).
+    Non-code files (for example XML/JSON/docs/assets) skip function extraction.
 
 
 STATUS/TYPE NORMALIZATION
@@ -146,6 +149,10 @@ OPERATIONAL NOTES
     If changed_methods extraction for one file exceeds timeout, only that file's
     function extraction is skipped; the same commit and remaining files continue.
     Use 0 to disable timeout behavior.
+- Manual file-skip hotkey:
+    while waiting on a file's changed_methods extraction, press Esc
+    to skip function extraction for the current file immediately.
+    Keep keyboard focus in the active terminal/debug console so Esc is captured.
 - If SQL reports truncation (for example Function_Arguments too long), increase
     column size in DB schema or add truncation policy in code.
 """
@@ -159,6 +166,11 @@ import shutil
 import sys
 import time
 from time import localtime, sleep, strftime
+
+try:
+    import msvcrt
+except ImportError:
+    msvcrt = None
 
 import pyodbc
 import pydriller
@@ -183,13 +195,16 @@ DEBUG_MODE = False
 DEFAULT_PYTHON_RECURSION_LIMIT = 10000
 
 LOCAL_RETRY_DELAY_SECONDS = 5
-MAX_LOCAL_RETRY_WINDOW_SECONDS = 900
+MAX_LOCAL_RETRY_WINDOW_SECONDS = 300
 RETRY_HEARTBEAT_INTERVAL_SECONDS = 30
+MAX_GIT_CONFIG_LOCK_RETRY_WINDOW_SECONDS = 60
 
 PROGRESS_LOG_INTERVAL = 5
 PROGRESS_BAR_WIDTH = 24
 LIVE_COMMIT_STATUS_PREFIX = "Process Git_Commit_ID: "
 DEFAULT_COMMIT_FILE_EXTRACT_TIMEOUT_SECONDS = 0.0
+COMMIT_FILE_EXTRACT_WAIT_POLL_SECONDS = 0.1
+MANUAL_SKIP_HOTKEY_HINT = "Esc"
 
 # VS Code breakpoint-friendly run mode:
 # - False: use normal command-line arguments
@@ -215,10 +230,12 @@ SOURCE_COMMITS_CACHE_SET = set()
 ENABLE_REGEX_FUNCTION_FALLBACK = False
 LIVE_COMMIT_STATUS_LAST_LENGTH = 0
 COMMIT_FILE_EXTRACT_TIMEOUT_SECONDS = DEFAULT_COMMIT_FILE_EXTRACT_TIMEOUT_SECONDS
+LIVE_PROGRESS_SUFFIX = ""
 
 GET_COMMITS_ALL_QUERY = None
 GET_COMMITS_RANGE_QUERY = None
 GET_SINGLE_COMMIT_ELIGIBILITY_QUERY = None
+GET_COMMIT_PROCESSED_EXISTS_QUERY = None
 INSERT_MODIFIED_FILE_QUERY = None
 INSERT_MODIFIED_FUNCTION_QUERY = None
 GET_MODIFIED_FILE_UNIQUE_HASH_QUERY = None
@@ -256,7 +273,7 @@ def print_progress_bar(phase, current, total, indent="  "):
 def print_live_commit_status(commit_hash):
     global LIVE_COMMIT_STATUS_LAST_LENGTH
 
-    message = _truncate_live_status_message(f"{LIVE_COMMIT_STATUS_PREFIX}{commit_hash}")
+    message = _truncate_live_status_message(f"{LIVE_COMMIT_STATUS_PREFIX}{commit_hash}{LIVE_PROGRESS_SUFFIX}")
     if LIVE_COMMIT_STATUS_LAST_LENGTH > len(message):
         message += " " * (LIVE_COMMIT_STATUS_LAST_LENGTH - len(message))
 
@@ -269,7 +286,48 @@ def print_live_commit_file_status(commit_hash, file_path):
 
     safe_file_path = file_path or "<unknown>"
     message = _truncate_live_status_message(
-        f"{LIVE_COMMIT_STATUS_PREFIX}{commit_hash} - File: {safe_file_path}"
+        f"{LIVE_COMMIT_STATUS_PREFIX}{commit_hash} - File: {safe_file_path}{LIVE_PROGRESS_SUFFIX}"
+    )
+    if LIVE_COMMIT_STATUS_LAST_LENGTH > len(message):
+        message += " " * (LIVE_COMMIT_STATUS_LAST_LENGTH - len(message))
+
+    print(f"\r{message}", end="", flush=True)
+    LIVE_COMMIT_STATUS_LAST_LENGTH = len(message)
+
+
+def _format_duration_hhmmss(total_seconds):
+    safe_seconds = max(0, int(total_seconds))
+    hours, remainder = divmod(safe_seconds, 3600)
+    minutes, seconds = divmod(remainder, 60)
+
+    if hours > 0:
+        return f"{hours:02d}:{minutes:02d}:{seconds:02d}"
+
+    return f"{minutes:02d}:{seconds:02d}"
+
+
+def _shorten_file_path_tail(file_path, tail_chars=60):
+    safe_path = file_path or "<unknown>"
+    if tail_chars is None or tail_chars <= 0:
+        return safe_path
+
+    if len(safe_path) <= tail_chars:
+        return safe_path
+
+    return f"...{safe_path[-tail_chars:]}"
+
+
+def print_live_wait_countdown_status(commit_hash, file_path, remaining_seconds, timeout_seconds):
+    global LIVE_COMMIT_STATUS_LAST_LENGTH
+
+    safe_file_path = _shorten_file_path_tail(file_path, tail_chars=60)
+    commit_short = str(commit_hash)[:7]
+    countdown_text = _format_duration_hhmmss(remaining_seconds)
+    timeout_text = _format_duration_hhmmss(timeout_seconds)
+
+    message = _truncate_live_status_message(
+        f"Waiting changed_methods | Commit: {commit_short} | File: {safe_file_path} | "
+        f"Timeout in: {countdown_text}/{timeout_text} | Press {MANUAL_SKIP_HOTKEY_HINT} to skip"
     )
     if LIVE_COMMIT_STATUS_LAST_LENGTH > len(message):
         message += " " * (LIVE_COMMIT_STATUS_LAST_LENGTH - len(message))
@@ -306,6 +364,21 @@ def clear_live_commit_status():
 
     print(f"\r{' ' * LIVE_COMMIT_STATUS_LAST_LENGTH}\r", end="", flush=True)
     LIVE_COMMIT_STATUS_LAST_LENGTH = 0
+
+
+def set_live_progress(total_commits, processed_commits):
+    global LIVE_PROGRESS_SUFFIX
+
+    if not total_commits or total_commits <= 0:
+        LIVE_PROGRESS_SUFFIX = ""
+        return
+
+    safe_processed = max(0, int(processed_commits))
+    if safe_processed > total_commits:
+        safe_processed = total_commits
+
+    remaining = total_commits - safe_processed
+    LIVE_PROGRESS_SUFFIX = f" | Done: {safe_processed}/{total_commits} | Remaining: {remaining}"
 
 
 def parse_arguments(cli_args=None):
@@ -393,7 +466,7 @@ def parse_arguments(cli_args=None):
         help=(
             "Per-file timeout (seconds) for changed_methods extraction. "
             "If timeout is reached, only that file's function extraction is skipped and processing continues. "
-            "0 disables timeout (default)."
+            "0 disables timeout (default). While waiting, press Esc to skip current file immediately."
         ),
     )
 
@@ -538,6 +611,32 @@ def _normalize_file_type(previous_file_name, updated_file_name):
     return "Other"
 
 
+def _should_extract_functions_for_file(previous_file_name, updated_file_name):
+    file_type = _normalize_file_type(previous_file_name, updated_file_name)
+
+    code_like_types = {
+        "JavaScript",
+        "C++",
+        "Header",
+        "Java",
+        "Rust",
+        "Go",
+        "C",
+        "Python",
+        "Kotlin",
+    }
+    if file_type in code_like_types:
+        return True
+
+    candidate_path = updated_file_name or previous_file_name or ""
+    extension = os.path.splitext(candidate_path)[1].lower()
+
+    if extension in {".mm", ".m"}:  # Objective-C / Objective-C++
+        return True
+
+    return False
+
+
 def _extract_function_parts(method, anonymous_name="<anonymous>"):
     base_name = getattr(method, "name", None) or getattr(method, "long_name", None)
     if base_name is not None:
@@ -601,6 +700,8 @@ def _extract_function_parts(method, anonymous_name="<anonymous>"):
 
 def _extract_changed_methods_metadata_worker(repo_path, commit_hash, previous_file_name, updated_file_name, out_queue):
     try:
+        _install_subprocess_winerror6_guard_for_worker()
+
         commits = list(
             pydriller.Repository(
                 repo_path,
@@ -651,6 +752,68 @@ def _extract_changed_methods_metadata_worker(repo_path, commit_hash, previous_fi
         out_queue.put({"ok": False, "error": str(e), "methods": []})
 
 
+def _install_subprocess_winerror6_guard_for_worker():
+    """Suppress noisy WinError 6 from subprocess.Popen.__del__ in forcibly-terminated worker process."""
+    try:
+        import subprocess
+    except Exception:
+        return
+
+    current_del = getattr(subprocess.Popen, "__del__", None)
+    if current_del is None:
+        return
+
+    if getattr(current_del, "_winerror6_guarded", False):
+        return
+
+    def _safe_popen_del(self, _orig=current_del):
+        try:
+            _orig(self)
+        except OSError as e:
+            if getattr(e, "winerror", None) == 6:
+                return
+            raise
+
+    _safe_popen_del._winerror6_guarded = True
+    subprocess.Popen.__del__ = _safe_popen_del
+
+
+def _cleanup_extraction_worker_process(process):
+    if process is None:
+        return
+
+    try:
+        if process.is_alive():
+            process.terminate()
+    except Exception:
+        pass
+
+    try:
+        process.join(timeout=1)
+    except Exception:
+        pass
+
+    try:
+        process.close()
+    except Exception:
+        pass
+
+
+def _cleanup_extraction_worker_queue(out_queue):
+    if out_queue is None:
+        return
+
+    try:
+        out_queue.close()
+    except Exception:
+        pass
+
+    try:
+        out_queue.join_thread()
+    except Exception:
+        pass
+
+
 class _MethodMetadata:
     def __init__(self, payload):
         self.name = payload.get("name")
@@ -658,6 +821,46 @@ class _MethodMetadata:
         self.parameters = payload.get("parameters")
         self.start_line = payload.get("start_line")
         self.end_line = payload.get("end_line")
+
+
+def _is_manual_skip_hotkey_pressed():
+    if msvcrt is None:
+        return False
+
+    # VS Code Debug Console may not expose a valid console handle for msvcrt.
+    # In that case, hotkey polling must be disabled to avoid WinError 6.
+    if not hasattr(sys, "stdin") or sys.stdin is None:
+        return False
+    try:
+        if hasattr(sys.stdin, "isatty") and not sys.stdin.isatty():
+            return False
+    except Exception:
+        return False
+
+    pressed = False
+    try:
+        key_available = msvcrt.kbhit()
+    except (OSError, ValueError):
+        return False
+
+    while key_available:
+        try:
+            key = msvcrt.getch()
+        except (OSError, ValueError):
+            break
+        except Exception:
+            break
+
+        # Esc key
+        if key == b"\x1b":
+            pressed = True
+
+        try:
+            key_available = msvcrt.kbhit()
+        except (OSError, ValueError):
+            break
+
+    return pressed
 
 
 def _get_changed_methods_with_timeout(modified_file, commit_hash, repo_path, previous_file_name, updated_file_name, timeout_seconds):
@@ -674,12 +877,40 @@ def _get_changed_methods_with_timeout(modified_file, commit_hash, repo_path, pre
     )
 
     process.start()
-    process.join(timeout_seconds)
 
-    if process.is_alive():
-        process.terminate()
-        process.join()
-        return None, True, f"Timeout after {timeout_seconds}s"
+    wait_started = time.time()
+    last_rendered_remaining_seconds = None
+    target_file = updated_file_name or previous_file_name or "<unknown>"
+    while process.is_alive():
+        if _is_manual_skip_hotkey_pressed():
+            clear_live_commit_status()
+            _cleanup_extraction_worker_process(process)
+            return None, True, f"Manual skip requested ({MANUAL_SKIP_HOTKEY_HINT})"
+
+        elapsed = time.time() - wait_started
+        if elapsed >= timeout_seconds:
+            clear_live_commit_status()
+            _cleanup_extraction_worker_process(process)
+            return None, True, f"Timeout after {timeout_seconds}s"
+
+        remaining = timeout_seconds - elapsed
+        remaining_seconds = int(max(0.0, remaining) + 0.999)
+        if remaining_seconds != last_rendered_remaining_seconds:
+            print_live_wait_countdown_status(
+                commit_hash=commit_hash,
+                file_path=target_file,
+                remaining_seconds=remaining_seconds,
+                timeout_seconds=timeout_seconds,
+            )
+            last_rendered_remaining_seconds = remaining_seconds
+
+        wait_slice = min(COMMIT_FILE_EXTRACT_WAIT_POLL_SECONDS, max(0.0, remaining))
+        try:
+            process.join(wait_slice)
+        except (OSError, ValueError):
+            clear_live_commit_status()
+            _cleanup_extraction_worker_process(process)
+            return None, True, "Worker handle became invalid; skipped file extraction"
 
     result = None
     try:
@@ -687,8 +918,8 @@ def _get_changed_methods_with_timeout(modified_file, commit_hash, repo_path, pre
     except queue.Empty:
         result = {"ok": False, "error": "No result returned from worker", "methods": []}
     finally:
-        out_queue.close()
-        out_queue.join_thread()
+        _cleanup_extraction_worker_queue(out_queue)
+        _cleanup_extraction_worker_process(process)
 
     if not result.get("ok"):
         return None, False, result.get("error")
@@ -700,6 +931,9 @@ def _get_changed_methods_with_timeout(modified_file, commit_hash, repo_path, pre
 def _extract_function_records(modified_file, file_status, commit_hash=None, repo_path=None):
     records = []
     previous_file_name, updated_file_name = _get_pydriller_paths(modified_file)
+
+    if not _should_extract_functions_for_file(previous_file_name, updated_file_name):
+        return records
 
     anonymous_context = updated_file_name
     if not anonymous_context:
@@ -722,12 +956,14 @@ def _extract_function_records(modified_file, file_status, commit_hash=None, repo
     if timed_out:
         clear_live_commit_status()
         target_file = updated_file_name or previous_file_name or "<unknown>"
+        reason_text = changed_methods_error or f"Timeout after {COMMIT_FILE_EXTRACT_TIMEOUT_SECONDS}s"
         print(
-            f"[{strftime('%H:%M:%S', localtime())}] [WARNING] changed_methods timeout for file '{target_file}' "
-            f"in commit {str(commit_hash)[:7]} after {COMMIT_FILE_EXTRACT_TIMEOUT_SECONDS}s; "
+            f"[{strftime('%H:%M:%S', localtime())}] [WARNING] changed_methods extraction interrupted for file '{target_file}' "
+            f"in commit {str(commit_hash)[:7]} ({reason_text}); "
             f"skipping function extraction for this file"
         )
         changed_methods = None
+        return records
     elif changed_methods_error and DEBUG_MODE:
         clear_live_commit_status()
         target_file = updated_file_name or previous_file_name or "<unknown>"
@@ -854,7 +1090,8 @@ def _extract_function_records_from_diff(modified_file, anonymous_name):
 def configure_table_queries(table_number):
     global TABLE_NUMBER, TABLE_SOURCE_COMMITS, TABLE_MODIFIED_FILES, TABLE_MODIFIED_FUNCTIONS
     global HAS_MODIFIED_FUNCTIONS_TABLE, HAS_FILE_TYPE_COLUMN, HAS_FUNCTION_ARGUMENTS_COLUMN
-    global GET_COMMITS_ALL_QUERY, GET_COMMITS_RANGE_QUERY, GET_SINGLE_COMMIT_ELIGIBILITY_QUERY, INSERT_MODIFIED_FILE_QUERY, INSERT_MODIFIED_FUNCTION_QUERY, GET_MODIFIED_FILE_UNIQUE_HASH_QUERY
+    global GET_COMMITS_ALL_QUERY, GET_COMMITS_RANGE_QUERY, GET_SINGLE_COMMIT_ELIGIBILITY_QUERY, GET_COMMIT_PROCESSED_EXISTS_QUERY
+    global INSERT_MODIFIED_FILE_QUERY, INSERT_MODIFIED_FUNCTION_QUERY, GET_MODIFIED_FILE_UNIQUE_HASH_QUERY
 
     TABLE_NUMBER = table_number
     TABLE_SOURCE_COMMITS = "[dbo].[GitCommitList]"
@@ -979,6 +1216,17 @@ def configure_table_queries(table_number):
             ORDER BY src.[Git_commit_ID]
     '''
 
+    GET_COMMIT_PROCESSED_EXISTS_QUERY = f'''
+            SELECT TOP 1 1
+            FROM {TABLE_MODIFIED_FILES} done
+            WHERE done.[Git_commit_ID] = ?
+              AND (
+                    ISNULL(LTRIM(RTRIM(done.[Previous_File_Name])), '') <> ''
+                 OR ISNULL(LTRIM(RTRIM(done.[Updated_File_Name])), '') <> ''
+                 OR ISNULL(LTRIM(RTRIM(done.[File_Status])), '') <> ''
+              )
+    '''
+
     if HAS_FILE_TYPE_COLUMN:
         INSERT_MODIFIED_FILE_QUERY = f'''
             INSERT INTO {TABLE_MODIFIED_FILES}
@@ -1027,7 +1275,7 @@ def get_commits_from_db(start_git_commit_id=None, end_git_commit_id=None):
     return list(SOURCE_COMMITS_CACHE)
 
 
-def load_source_commits_cache():
+def load_source_commits_cache(start_git_commit_id=None, end_git_commit_id=None):
     global SOURCE_COMMITS_CACHE, SOURCE_COMMITS_CACHE_SET
 
     attempt = 0
@@ -1042,7 +1290,14 @@ def load_source_commits_cache():
         try:
             conn = pyodbc.connect(CONN_STR)
             cursor = conn.cursor()
-            cursor.execute(GET_SINGLE_COMMIT_ELIGIBILITY_QUERY)
+
+            use_range = start_git_commit_id is not None and end_git_commit_id is not None
+            if use_range:
+                cursor.execute(GET_COMMITS_RANGE_QUERY, start_git_commit_id, end_git_commit_id)
+                mode_label = "eligible + unprocessed (range)"
+            else:
+                cursor.execute(GET_COMMITS_ALL_QUERY)
+                mode_label = "eligible + unprocessed (all)"
 
             SOURCE_COMMITS_CACHE = [row[0] for row in cursor.fetchall()]
             SOURCE_COMMITS_CACHE_SET = set(SOURCE_COMMITS_CACHE)
@@ -1051,8 +1306,8 @@ def load_source_commits_cache():
             conn.close()
 
             print(
-                f"[{strftime('%H:%M:%S', localtime())}] [INFO] Loaded {len(SOURCE_COMMITS_CACHE)} eligible commits "
-                f"from {TABLE_SOURCE_COMMITS} into memory cache"
+                f"[{strftime('%H:%M:%S', localtime())}] [INFO] Loaded {len(SOURCE_COMMITS_CACHE)} commits "
+                f"({mode_label}) from {TABLE_SOURCE_COMMITS} into memory cache"
             )
             return
 
@@ -1077,6 +1332,22 @@ def load_source_commits_cache():
 
 def is_commit_allowed_by_filters(commit_hash):
     return commit_hash in SOURCE_COMMITS_CACHE_SET
+
+
+def is_commit_already_processed(commit_hash):
+    conn = None
+    cursor = None
+    try:
+        conn = pyodbc.connect(CONN_STR)
+        cursor = conn.cursor()
+        cursor.execute(GET_COMMIT_PROCESSED_EXISTS_QUERY, commit_hash)
+        row = cursor.fetchone()
+        return row is not None
+    finally:
+        if cursor:
+            cursor.close()
+        if conn:
+            conn.close()
 
 
 def load_failed_commits_file(file_path):
@@ -1117,6 +1388,9 @@ def write_failed_commits_file(failed_commits):
 
 def get_commit_modified_data(commit_hash, repo_path):
     attempt = 0
+    retry_started = time.time()
+    last_heartbeat = 0
+    git_config_lock_path = os.path.join(repo_path, ".git", "config.lock")
 
     while True:
         attempt += 1
@@ -1180,9 +1454,34 @@ def get_commit_modified_data(commit_hash, repo_path):
             text = str(e).lower()
             if ".git" in text and "config.lock" in text:
                 clear_live_commit_status()
+                lock_age_seconds = None
+                if os.path.exists(git_config_lock_path):
+                    try:
+                        lock_age_seconds = int(max(0, time.time() - os.path.getmtime(git_config_lock_path)))
+                    except Exception:
+                        lock_age_seconds = None
+
+                lock_age_suffix = f" lock_age={lock_age_seconds}s" if lock_age_seconds is not None else " lock_age=unknown"
+
+                if _retry_window_exhausted(retry_started, MAX_GIT_CONFIG_LOCK_RETRY_WINDOW_SECONDS):
+                    print(
+                        f"[{strftime('%H:%M:%S', localtime())}] [ERROR] Git config lock contention retry window exceeded "
+                        f"for {commit_hash[:7]} after {attempt} attempts; skipping commit "
+                        f"(path={git_config_lock_path};{lock_age_suffix})"
+                    )
+                    return None
+
+                if _should_emit_retry_heartbeat(last_heartbeat):
+                    elapsed = int(time.time() - retry_started)
+                    print(
+                        f"[{strftime('%H:%M:%S', localtime())}] [INFO] Still waiting on Git config lock for {commit_hash[:7]}... "
+                        f"elapsed={elapsed}s attempts={attempt} (path={git_config_lock_path};{lock_age_suffix})"
+                    )
+                    last_heartbeat = time.time()
+
                 print(
                     f"[{strftime('%H:%M:%S', localtime())}] [WARNING] Git config lock contention for {commit_hash[:7]} "
-                    f"(attempt {attempt}), retrying in {LOCAL_RETRY_DELAY_SECONDS}s"
+                    f"(attempt {attempt}), retrying in {LOCAL_RETRY_DELAY_SECONDS}s (path={git_config_lock_path};{lock_age_suffix})"
                 )
                 sleep(LOCAL_RETRY_DELAY_SECONDS)
                 continue
@@ -1436,6 +1735,8 @@ def process_all_commits(
 
         extracted_batch = []
         for i, commit_hash in enumerate(batch, 1):
+            processed_commits_before_current = start_idx + (i - 1)
+            set_live_progress(total_commits, processed_commits_before_current)
             print_live_commit_status(commit_hash)
 
             data = get_commit_modified_data(commit_hash, repo_path)
@@ -1448,13 +1749,17 @@ def process_all_commits(
 
             if i % PROGRESS_LOG_INTERVAL == 0 or i == len(batch):
                 clear_live_commit_status()
+                processed_commits_after_current = start_idx + i
+                remaining_commits = max(0, total_commits - processed_commits_after_current)
                 print(
                     f"[{strftime('%H:%M:%S', localtime())}] [INFO] Extracting commit {i}/{len(batch)} "
-                    f"({commit_hash[:12]}...)"
+                    f"({commit_hash[:12]}...) | overall_done={processed_commits_after_current}/{total_commits} "
+                    f"remaining={remaining_commits}"
                 )
                 print_progress_bar("Extract", i, len(batch))
 
         clear_live_commit_status()
+        set_live_progress(0, 0)
         print_progress_bar("DB Update", 0, len(extracted_batch) if extracted_batch else 1)
         batch_recursion_skipped_files = 0
 
@@ -1527,6 +1832,12 @@ def process_single_commit(repo_path, commit_hash, bypass_filters=False):
             return
     else:
         print(f"[{strftime('%H:%M:%S', localtime())}] [INFO] --single-bypass-filters enabled; processing commit regardless of source filters")
+
+    if is_commit_already_processed(commit_hash):
+        print(
+            f"[{strftime('%H:%M:%S', localtime())}] [INFO] Single commit already processed in {TABLE_MODIFIED_FILES}; skipping: {commit_hash}"
+        )
+        return
 
     details = get_commit_modified_data(commit_hash, repo_path)
     if details is None:
@@ -1620,8 +1931,19 @@ def main():
             f"[{strftime('%H:%M:%S', localtime())}] [INFO] Loaded {len(replay_commits)} commit hashes "
             f"from failed-commits file"
         )
+
+        replay_total = len(replay_commits)
+        replay_commits = [c for c in replay_commits if not is_commit_already_processed(c)]
+        skipped_replay_processed = replay_total - len(replay_commits)
+        if skipped_replay_processed > 0:
+            print(
+                f"[{strftime('%H:%M:%S', localtime())}] [INFO] Replay filtered out {skipped_replay_processed} already-processed commits"
+            )
     else:
-        load_source_commits_cache()
+        load_source_commits_cache(
+            start_git_commit_id=args.start_git_commit_id,
+            end_git_commit_id=args.end_git_commit_id,
+        )
 
     if args.replay_failed_file:
         process_all_commits(

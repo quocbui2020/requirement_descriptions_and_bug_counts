@@ -565,7 +565,10 @@ CREATE TABLE [dbo].[Modified_Files](
 ------------------------------------------------------------------------
 
 **) Run python script `GitModifiedFilesFunctionsExtractor.py` to collect modified files and modified functions.
-
+Notes:
+	- (3/2/2026) I noticed git commit id='288c53eb2b2e407f9b9dc521940b3aa114ef7c53' has a purpose to just create a new branch. It has 23,832 files changed. It serves no purpose for our research.
+		TODO ACTION: Update the codes to collected modified files and modified functions if it associated to a particular bugs.
+		
 ------------------------------------------------------------------------
 
 
@@ -679,82 +682,64 @@ cls; cd C:\Users\quocb\quocbui\Studies\research\GithubRepo\requirement_descripti
 cls; cd C:\Users\quocb\quocbui\Studies\research\GithubRepo\requirement_descriptions_and_bug_counts\Mozilla; ..\venv311\Scripts\Activate.ps1; python .\GitModifiedFilesFunctionsExtractor.py --table-number 10 --repo-path C:\Users\quocb\quocbui\Studies\research\GithubRepo\firefox_workers\firefox-worker-10 --commit-fie-extract-timeout-seconds 900 73253dc56e1a2200022348d7826c9e2ce561f9cf 801618ee73ae05fa6edadb04d497bff36fee557e
 
 11)
-cls; cd C:\Users\quocb\quocbui\Studies\research\GithubRepo\requirement_descriptions_and_bug_counts\Mozilla; ..\venv311\Scripts\Activate.ps1; python .\GitModifiedFilesFunctionsExtractor.py --table-number 11 --repo-path C:\Users\quocb\quocbui\Studies\research\GithubRepo\firefox_workers\firefox-worker-11 --commit-fie-extract-timeout-seconds 900 801629c58e13d44fe241c870a357bc8863e7904f 8ce103a290d6611d74cfd772bd36b0c1d90258e7
+cls; cd C:\Users\quocb\quocbui\Studies\research\GithubRepo\requirement_descriptions_and_bug_counts\Mozilla; ..\venv311\Scripts\Activate.ps1; python .\GitModifiedFilesFunctionsExtractor.py --table-number 11 --repo-path C:\Users\quocb\quocbui\Studies\research\GithubRepo\firefox_workers\firefox-worker-11 --commit-fie-extract-timeout-seconds 300 801629c58e13d44fe241c870a357bc8863e7904f 8ce103a290d6611d74cfd772bd36b0c1d90258e7
 
 12)
-cls; cd C:\Users\quocb\quocbui\Studies\research\GithubRepo\requirement_descriptions_and_bug_counts\Mozilla; ..\venv311\Scripts\Activate.ps1; python .\GitModifiedFilesFunctionsExtractor.py --table-number 12 --repo-path C:\Users\quocb\quocbui\Studies\research\GithubRepo\firefox_workers\firefox-worker-12 --commit-fie-extract-timeout-seconds 900 8ce107be1f46128f20ea8cb9b577564cb92d8abb 99b0cd2ece3f5e6f88c5b08e990def54c529f493
+cls; cd C:\Users\quocb\quocbui\Studies\research\GithubRepo\requirement_descriptions_and_bug_counts\Mozilla; ..\venv311\Scripts\Activate.ps1; python .\GitModifiedFilesFunctionsExtractor.py --table-number 12 --repo-path C:\Users\quocb\quocbui\Studies\research\GithubRepo\firefox_workers\firefox-worker-12 --commit-fie-extract-timeout-seconds 300 8ce107be1f46128f20ea8cb9b577564cb92d8abb 99b0cd2ece3f5e6f88c5b08e990def54c529f493
 
 13)
-cls; cd C:\Users\quocb\quocbui\Studies\research\GithubRepo\requirement_descriptions_and_bug_counts\Mozilla; ..\venv311\Scripts\Activate.ps1; python .\GitModifiedFilesFunctionsExtractor.py --table-number 13 --repo-path C:\Users\quocb\quocbui\Studies\research\GithubRepo\firefox_workers\firefox-worker-13 --commit-fie-extract-timeout-seconds 900 99b0d82c4a92a28d894d4106cb03b8bc514b9313 a689ea0aceca7a9662c7e0fd46a5426072ebebb1
+cls; cd C:\Users\quocb\quocbui\Studies\research\GithubRepo\requirement_descriptions_and_bug_counts\Mozilla; ..\venv311\Scripts\Activate.ps1; python .\GitModifiedFilesFunctionsExtractor.py --table-number 13 --repo-path C:\Users\quocb\quocbui\Studies\research\GithubRepo\firefox_workers\firefox-worker-13 --commit-fie-extract-timeout-seconds 300 99b0d82c4a92a28d894d4106cb03b8bc514b9313 a689ea0aceca7a9662c7e0fd46a5426072ebebb1
 
 14)
-cls; cd C:\Users\quocb\quocbui\Studies\research\GithubRepo\requirement_descriptions_and_bug_counts\Mozilla; ..\venv311\Scripts\Activate.ps1; python .\GitModifiedFilesFunctionsExtractor.py --table-number 14 --repo-path C:\Users\quocb\quocbui\Studies\research\GithubRepo\firefox_workers\firefox-worker-14 --commit-fie-extract-timeout-seconds 900 a689ec77573a375fabc69e6953c0822c1999c94a b366260daa2c2a4f963475a8b20f882c7b99518a
+cls; cd C:\Users\quocb\quocbui\Studies\research\GithubRepo\requirement_descriptions_and_bug_counts\Mozilla; ..\venv311\Scripts\Activate.ps1; python .\GitModifiedFilesFunctionsExtractor.py --table-number 14 --repo-path C:\Users\quocb\quocbui\Studies\research\GithubRepo\firefox_workers\firefox-worker-14 --commit-fie-extract-timeout-seconds 300 a689ec77573a375fabc69e6953c0822c1999c94a b366260daa2c2a4f963475a8b20f882c7b99518a
 
 15)
-cls; cd C:\Users\quocb\quocbui\Studies\research\GithubRepo\requirement_descriptions_and_bug_counts\Mozilla; ..\venv311\Scripts\Activate.ps1; python .\GitModifiedFilesFunctionsExtractor.py --table-number 15 --repo-path C:\Users\quocb\quocbui\Studies\research\GithubRepo\firefox_workers\firefox-worker-15 --commit-fie-extract-timeout-seconds 900 b3663a8ea9dc8ed39f9b7a5e2a40ca224008de9e c027beb0e6401896d4147b1f03c993b66bc7592d
+cls; cd C:\Users\quocb\quocbui\Studies\research\GithubRepo\requirement_descriptions_and_bug_counts\Mozilla; ..\venv311\Scripts\Activate.ps1; python .\GitModifiedFilesFunctionsExtractor.py --table-number 15 --repo-path C:\Users\quocb\quocbui\Studies\research\GithubRepo\firefox_workers\firefox-worker-15 --commit-fie-extract-timeout-seconds 300 b3663a8ea9dc8ed39f9b7a5e2a40ca224008de9e c027beb0e6401896d4147b1f03c993b66bc7592d
 
 16)
-cls; cd C:\Users\quocb\quocbui\Studies\research\GithubRepo\requirement_descriptions_and_bug_counts\Mozilla; ..\venv311\Scripts\Activate.ps1; python .\GitModifiedFilesFunctionsExtractor.py --table-number 16 --repo-path C:\Users\quocb\quocbui\Studies\research\GithubRepo\firefox_workers\firefox-worker-16 --commit-fie-extract-timeout-seconds 900 c027cced5225557994390115bba3721665c1804c ccde746330af69346a3a8fc30c62d08bf657cde9
+cls; cd C:\Users\quocb\quocbui\Studies\research\GithubRepo\requirement_descriptions_and_bug_counts\Mozilla; ..\venv311\Scripts\Activate.ps1; python .\GitModifiedFilesFunctionsExtractor.py --table-number 16 --repo-path C:\Users\quocb\quocbui\Studies\research\GithubRepo\firefox_workers\firefox-worker-16 --commit-fie-extract-timeout-seconds 300 c027cced5225557994390115bba3721665c1804c ccde746330af69346a3a8fc30c62d08bf657cde9
 
 17)
 cls; cd C:\Users\quocb\quocbui\Studies\research\GithubRepo\requirement_descriptions_and_bug_counts\Mozilla; ..\venv311\Scripts\Activate.ps1; python .\GitModifiedFilesFunctionsExtractor.py --table-number 17 --repo-path C:\Users\quocb\quocbui\Studies\research\GithubRepo\firefox_workers\firefox-worker-17 --commit-fie-extract-timeout-seconds 900 ccde7a70c46469b463a441484fd848e5f78c9af2 d9a34378fd785833b17b271b0df249ba092c7148
 
 18)
-cls; cd C:\Users\quocb\quocbui\Studies\research\GithubRepo\requirement_descriptions_and_bug_counts\Mozilla; ..\venv311\Scripts\Activate.ps1; python .\GitModifiedFilesFunctionsExtractor.py --table-number 18 --repo-path C:\Users\quocb\quocbui\Studies\research\GithubRepo\firefox_workers\firefox-worker-18 --commit-fie-extract-timeout-seconds 900 d9a36ce13afffff8d7f13c5d20a91016585ea9af e66e854db4603995a9b8a2734cddbb883bea1f89
+cls; cd C:\Users\quocb\quocbui\Studies\research\GithubRepo\requirement_descriptions_and_bug_counts\Mozilla; ..\venv311\Scripts\Activate.ps1; python .\GitModifiedFilesFunctionsExtractor.py --table-number 18 --repo-path C:\Users\quocb\quocbui\Studies\research\GithubRepo\firefox_workers\firefox-worker-18 --commit-fie-extract-timeout-seconds 300 d9a36ce13afffff8d7f13c5d20a91016585ea9af e66e854db4603995a9b8a2734cddbb883bea1f89
 
 19)
-cls; cd C:\Users\quocb\quocbui\Studies\research\GithubRepo\requirement_descriptions_and_bug_counts\Mozilla; ..\venv311\Scripts\Activate.ps1; python .\GitModifiedFilesFunctionsExtractor.py --table-number 19 --repo-path C:\Users\quocb\quocbui\Studies\research\GithubRepo\firefox_workers\firefox-worker-19 --commit-fie-extract-timeout-seconds 900 e66e99d799aabb3d4f2707ff0ee3ed95ecdadfe1 f338f202b3caed032def63f433c89f3c324e8f74
+cls; cd C:\Users\quocb\quocbui\Studies\research\GithubRepo\requirement_descriptions_and_bug_counts\Mozilla; ..\venv311\Scripts\Activate.ps1; python .\GitModifiedFilesFunctionsExtractor.py --table-number 19 --repo-path C:\Users\quocb\quocbui\Studies\research\GithubRepo\firefox_workers\firefox-worker-19 --commit-fie-extract-timeout-seconds 300 e66e99d799aabb3d4f2707ff0ee3ed95ecdadfe1 f338f202b3caed032def63f433c89f3c324e8f74
 
 20)
-cls; cd C:\Users\quocb\quocbui\Studies\research\GithubRepo\requirement_descriptions_and_bug_counts\Mozilla; ..\venv311\Scripts\Activate.ps1; python .\GitModifiedFilesFunctionsExtractor.py --table-number 20 --repo-path C:\Users\quocb\quocbui\Studies\research\GithubRepo\firefox_workers\firefox-worker-20 --commit-fie-extract-timeout-seconds 900 f338fe23e2ae8a89165e74c3ac171ee848f86dc9 fffffe7e0e643f1b8d49fc8b79fac6645220e3fb
+cls; cd C:\Users\quocb\quocbui\Studies\research\GithubRepo\requirement_descriptions_and_bug_counts\Mozilla; ..\venv311\Scripts\Activate.ps1; python .\GitModifiedFilesFunctionsExtractor.py --table-number 20 --repo-path C:\Users\quocb\quocbui\Studies\research\GithubRepo\firefox_workers\firefox-worker-20 --commit-fie-extract-timeout-seconds 300 f338fe23e2ae8a89165e74c3ac171ee848f86dc9 fffffe7e0e643f1b8d49fc8b79fac6645220e3fb
 
 */
 
+-- Validate Modified Files:
+select fi.*
+from FixFox_v3.dbo.Changeset_Files fi
+inner join HgGit_Mappings m on m.Hg_Changeset_ID = fi.Changeset_Hash_ID 
+--inner join FixFox_v3.dbo.Changeset_Modified_Functions func on func.Changeset_File_Unique_Hash = fi.Unique_Hash
+where m.Git_Commit_ID='80254c44d838624cddfcd1210b3d3f36c133c23b'
+order by File_Status
 
+select * from Modified_Files_1
+order by File_Status
 
-SET NOCOUNT ON;
+-- Validate Modified Functions:
+select func.*, fi.Previous_File_Name, fi.Updated_File_Name
+from FixFox_v3.dbo.Changeset_Files fi
+inner join HgGit_Mappings m on m.Hg_Changeset_ID = fi.Changeset_Hash_ID 
+inner join FixFox_v3.dbo.Changeset_Modified_Functions func on func.Changeset_File_Unique_Hash = fi.Unique_Hash
+where m.Git_Commit_ID='80254c44d838624cddfcd1210b3d3f36c133c23b'
+order by function_name
 
-DECLARE @i INT = 1;
-DECLARE @sql NVARCHAR(MAX);
-DECLARE @funcTable SYSNAME;
-DECLARE @fileTable SYSNAME;
+select Modified_Files_1.File_Type,
+	Modified_Files_1.Previous_File_Name,
+	Modified_Functions_1.Function_Name,
+	Modified_Functions_1.Function_Arguments
+from Modified_Functions_1
+left join Modified_Files_1 on Modified_Files_1.Unique_Hash = Modified_Functions_1.Modified_File_Unique_Hash
+order by function_name
 
-BEGIN TRY
-    BEGIN TRAN;
-
-    WHILE @i <= 20
-    BEGIN
-        SET @funcTable = N'dbo.Modified_Functions_' + CAST(@i AS NVARCHAR(10));
-        SET @fileTable = N'dbo.Modified_Files_' + CAST(@i AS NVARCHAR(10));
-
-        -- Delete child rows first (if FK exists)
-        IF OBJECT_ID(@funcTable, 'U') IS NOT NULL
-        BEGIN
-            SET @sql = N'DELETE FROM ' + QUOTENAME('dbo') + N'.' + QUOTENAME(N'Modified_Functions_' + CAST(@i AS NVARCHAR(10))) + N';';
-            EXEC sp_executesql @sql;
-            PRINT N'Cleared ' + @funcTable;
-        END
-        ELSE
-            PRINT N'Skipped (not found): ' + @funcTable;
-
-        IF OBJECT_ID(@fileTable, 'U') IS NOT NULL
-        BEGIN
-            SET @sql = N'DELETE FROM ' + QUOTENAME('dbo') + N'.' + QUOTENAME(N'Modified_Files_' + CAST(@i AS NVARCHAR(10))) + N';';
-            EXEC sp_executesql @sql;
-            PRINT N'Cleared ' + @fileTable;
-        END
-        ELSE
-            PRINT N'Skipped (not found): ' + @fileTable;
-
-        SET @i += 1;
-    END
-
-    COMMIT TRAN;
-    PRINT N'All shard tables processed.';
-END TRY
-BEGIN CATCH
-    IF @@TRANCOUNT > 0
-        ROLLBACK TRAN;
-
-    THROW;
-END CATCH;
+/*
+(aURI, aOriginalURI, aDocURI, aReferrerURI, aReferrerPolicy, aAPIRedirectToURI, aTopWindowURI, aLoadFlags, requestHeaders, requestMethod, uploadStream, uploadStreamHasHeaders, priority, classOfService, redirectionLimit, allowSTS, thirdPartyFlags, doResumeAt, startPos, entityID, chooseApplicationCache, appCacheClientID, allowSpdy, allowAltSvc, beConservative, tlsFlags, aLoadInfoArgs, aSynthesizedResponseHead, aSecurityInfoSerialization, aCacheKey, aRequestContextID, aCorsPreflightArgs, aInitialRwin, aBlockAuthPrompt, aSuspendAfterSynthesizeResponse, aAllowStaleCacheContent, aContentTypeHint, aCorsMode, aRedirectMode, aChannelId, aContentWindowId, aPreferredAlternativeType, aTopLevelOuterContentWindowId, aLaunchServiceWorkerStart, aLaunchServiceWorkerEnd, aDispatchFetchEventStart, aDispatchFetchEventEnd, aHandleFetchEventStart, aHandleFetchEventEnd, aForceMainDocumentChannel)
+*/

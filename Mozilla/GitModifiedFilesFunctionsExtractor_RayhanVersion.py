@@ -9,7 +9,7 @@ REPO_PATH = r"C:\Users\quocb\quocbui\Studies\research\GithubRepo\firefox"
 
 # If set to a commit hash, script runs SINGLE mode.
 # If None, script runs LIST mode using COMMIT_HASH_LIST below.
-SINGLE_COMMIT_ID = '80254c44d838624cddfcd1210b3d3f36c133c23b'
+SINGLE_COMMIT_ID = '503e5b33874c8ede68f9a3d910c9381a502fb032'
 
 # Used only when SINGLE_COMMIT_ID is None
 # Add one or more commit hashes here to run list mode.
@@ -76,6 +76,7 @@ def get_modified_files_and_functions(repo_path, commit_hashes):
         for modified_file in commit.modified_files:
             file_path = modified_file.new_path or modified_file.old_path
             if file_path:
+                print(f"Commit: {commit.hash[:7]} | File: {file_path}...", flush=True)
                 modified_data[commit.hash][file_path] = [
                     method.name for method in modified_file.changed_methods
                 ]
