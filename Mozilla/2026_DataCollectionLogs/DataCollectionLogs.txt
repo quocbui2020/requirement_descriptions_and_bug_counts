@@ -529,6 +529,147 @@ Then for each of the 20 processes (PowerShell window), I run following script:
 	cls; cd C:\Users\quocb\quocbui\Studies\research\GithubRepo\requirement_descriptions_and_bug_counts\Mozilla; ..\venv311\Scripts\Activate.ps1; python .\GitCommitsDetailsExtractor.py --table-number 3 --repo-path C:\Users\quocb\quocbui\Studies\research\GithubRepo\firefox_workers\firefox-worker-03 19913513b11917d9f63e21dc998623da68cebc30 265c36385d525e4eb9b5fd81481aa84b89dc773c
 	
 After all 20 processes have been completed. I need to merge all the data together and migrate them back into original tables. Lastly, I delete all copies of .git and tables.
+
+
+/*---------------------- UNIMPORTANT NOTES--------------------------*/
+/*---------------------- UNIMPORTANT NOTES--------------------------*/
+/*---------------------- UNIMPORTANT NOTES--------------------------*/
+/*---------------------- UNIMPORTANT NOTES--------------------------*/
+/*---------------------- UNIMPORTANT NOTES--------------------------*/
+
+		/* -------------------------------------- */
+		/* -------------------------------------- */
+		/* -------------------------------------- */
+		/* KEEP TRACK OF `GitCommitsDetailsExtractor.py */
+
+		/*
+		update GitCommitList
+			set backed_out=null, is_backout_commit=null, [Description]=null
+		where [Description] is not null
+			or backed_out is not null
+			or is_backout_commit is not null;
+
+		delete from GitCommit_Properties where [Name] <> 'Parent ID';
+		--*/
+
+
+		select count(*)
+		from GitCommitList
+		where backed_out is not null
+		or is_backout_commit is not null
+		or Description is not null;
+
+		select count(*) from GitCommit_Properties where [Name] <> 'Parent ID'
+
+		select count(*) from GitCommitList where [Description] is null;
+
+
+
+		/* Tasks for running: GitCommitsDetailsExtractor.py
+		hg log -r 0334ef8f35936652177399455de986837245a7c6 --debug --cwd C:\Users\quocb\quocbui\Studies\research\GithubRepo\firefox_mercurial
+
+		950,351 / 20 tasks = 47,517.55
+
+		1)
+		cls; cd C:\Users\quocb\quocbui\Studies\research\GithubRepo\requirement_descriptions_and_bug_counts\Mozilla; ..\venv311\Scripts\Activate.ps1; python .\GitModifiedFilesFunctionsExtractor.py --table-number 1 --repo-path C:\Users\quocb\quocbui\Studies\research\GithubRepo\firefox_workers\firefox-worker-01 --commit-fie-extract-timeout-seconds 900 00000163a890eb9f05f98c4084cd07846aa7cbf0 0cc73f8e55a9781a93769b17be8a0571064430b7
+
+		2)
+		cls; cd C:\Users\quocb\quocbui\Studies\research\GithubRepo\requirement_descriptions_and_bug_counts\Mozilla; ..\venv311\Scripts\Activate.ps1; python .\GitModifiedFilesFunctionsExtractor.py --table-number 2 --repo-path C:\Users\quocb\quocbui\Studies\research\GithubRepo\firefox_workers\firefox-worker-02 --commit-fie-extract-timeout-seconds 900 0cc74bd4fdf7264f9d9bb6fe22f9691f8b5ca329 19912dd349bc1ea6e10719d7366cfd233dc483e9
+
+		3)
+		cls; cd C:\Users\quocb\quocbui\Studies\research\GithubRepo\requirement_descriptions_and_bug_counts\Mozilla; ..\venv311\Scripts\Activate.ps1; python .\GitModifiedFilesFunctionsExtractor.py --table-number 3 --repo-path C:\Users\quocb\quocbui\Studies\research\GithubRepo\firefox_workers\firefox-worker-03 --commit-fie-extract-timeout-seconds 900 19913513b11917d9f63e21dc998623da68cebc30 265c36385d525e4eb9b5fd81481aa84b89dc773c
+
+		4)
+		cls; cd C:\Users\quocb\quocbui\Studies\research\GithubRepo\requirement_descriptions_and_bug_counts\Mozilla; ..\venv311\Scripts\Activate.ps1; python .\GitModifiedFilesFunctionsExtractor.py --table-number 4 --repo-path C:\Users\quocb\quocbui\Studies\research\GithubRepo\firefox_workers\firefox-worker-04 --commit-fie-extract-timeout-seconds 900 265c42d16f47111316f6a79e5308a0d6ac5d9f71 334746cbcbd83d2bea6bf70ba1227f5a096182ad
+
+		5)
+		cls; cd C:\Users\quocb\quocbui\Studies\research\GithubRepo\requirement_descriptions_and_bug_counts\Mozilla; ..\venv311\Scripts\Activate.ps1; python .\GitModifiedFilesFunctionsExtractor.py --table-number 5 --repo-path C:\Users\quocb\quocbui\Studies\research\GithubRepo\firefox_workers\firefox-worker-05 334747c45b1c6eb1010d8e30127ffc2d27436466 40185bf58a4c36b05414012f8a8cf93591df0318 --commit-fie-extract-timeout-seconds 900
+
+		6)
+		cls; cd C:\Users\quocb\quocbui\Studies\research\GithubRepo\requirement_descriptions_and_bug_counts\Mozilla; ..\venv311\Scripts\Activate.ps1; python .\GitModifiedFilesFunctionsExtractor.py --table-number 6 --repo-path C:\Users\quocb\quocbui\Studies\research\GithubRepo\firefox_workers\firefox-worker-06 --commit-fie-extract-timeout-seconds 900 4018908a051075d4f4b86bbea444f95ce6606720 4ccc349d24391ff087f82b6ab7fd7a33bd934580
+
+		7)
+		cls; cd C:\Users\quocb\quocbui\Studies\research\GithubRepo\requirement_descriptions_and_bug_counts\Mozilla; ..\venv311\Scripts\Activate.ps1; python .\GitModifiedFilesFunctionsExtractor.py --table-number 7 --repo-path C:\Users\quocb\quocbui\Studies\research\GithubRepo\firefox_workers\firefox-worker-07  --commit-fie-extract-timeout-seconds 900 4ccc3b9f19d30a0b97160982ea6bc47c87ffe211 599195b8366698f0ad22fa659d2d65c640d033bd
+
+		8)
+		cls; cd C:\Users\quocb\quocbui\Studies\research\GithubRepo\requirement_descriptions_and_bug_counts\Mozilla; ..\venv311\Scripts\Activate.ps1; python .\GitModifiedFilesFunctionsExtractor.py --table-number 8 --repo-path C:\Users\quocb\quocbui\Studies\research\GithubRepo\firefox_workers\firefox-worker-08 --commit-fie-extract-timeout-seconds 900 5991ada2f7b96d8632f062e12237c88440987bda 666be0ef8dcd7c551e206f83a149842f58e1e23c
+
+		9)
+		cls; cd C:\Users\quocb\quocbui\Studies\research\GithubRepo\requirement_descriptions_and_bug_counts\Mozilla; ..\venv311\Scripts\Activate.ps1; python .\GitModifiedFilesFunctionsExtractor.py --table-number 9 --repo-path C:\Users\quocb\quocbui\Studies\research\GithubRepo\firefox_workers\firefox-worker-09 --commit-fie-extract-timeout-seconds 900 666be89e13cfe3653580964b167a44526d9430ed 73253276b1fde5042ee80f2ca522099c1fd317b3
+
+		10)
+		cls; cd C:\Users\quocb\quocbui\Studies\research\GithubRepo\requirement_descriptions_and_bug_counts\Mozilla; ..\venv311\Scripts\Activate.ps1; python .\GitModifiedFilesFunctionsExtractor.py --table-number 10 --repo-path C:\Users\quocb\quocbui\Studies\research\GithubRepo\firefox_workers\firefox-worker-10 --commit-fie-extract-timeout-seconds 900 73253dc56e1a2200022348d7826c9e2ce561f9cf 801618ee73ae05fa6edadb04d497bff36fee557e
+
+		11)
+		cls; cd C:\Users\quocb\quocbui\Studies\research\GithubRepo\requirement_descriptions_and_bug_counts\Mozilla; ..\venv311\Scripts\Activate.ps1; python .\GitModifiedFilesFunctionsExtractor.py --table-number 11 --repo-path C:\Users\quocb\quocbui\Studies\research\GithubRepo\firefox_workers\firefox-worker-11 --commit-fie-extract-timeout-seconds 900 801629c58e13d44fe241c870a357bc8863e7904f 8ce103a290d6611d74cfd772bd36b0c1d90258e7
+
+		12)
+		cls; cd C:\Users\quocb\quocbui\Studies\research\GithubRepo\requirement_descriptions_and_bug_counts\Mozilla; ..\venv311\Scripts\Activate.ps1; python .\GitModifiedFilesFunctionsExtractor.py --table-number 12 --repo-path C:\Users\quocb\quocbui\Studies\research\GithubRepo\firefox_workers\firefox-worker-12 --commit-fie-extract-timeout-seconds 900 8ce107be1f46128f20ea8cb9b577564cb92d8abb 99b0cd2ece3f5e6f88c5b08e990def54c529f493
+
+		13)
+		cls; cd C:\Users\quocb\quocbui\Studies\research\GithubRepo\requirement_descriptions_and_bug_counts\Mozilla; ..\venv311\Scripts\Activate.ps1; python .\GitModifiedFilesFunctionsExtractor.py --table-number 13 --repo-path C:\Users\quocb\quocbui\Studies\research\GithubRepo\firefox_workers\firefox-worker-13 --commit-fie-extract-timeout-seconds 900 99b0d82c4a92a28d894d4106cb03b8bc514b9313 a689ea0aceca7a9662c7e0fd46a5426072ebebb1
+
+		14)
+		cls; cd C:\Users\quocb\quocbui\Studies\research\GithubRepo\requirement_descriptions_and_bug_counts\Mozilla; ..\venv311\Scripts\Activate.ps1; python .\GitModifiedFilesFunctionsExtractor.py --table-number 14 --repo-path C:\Users\quocb\quocbui\Studies\research\GithubRepo\firefox_workers\firefox-worker-14 --commit-fie-extract-timeout-seconds 900 a689ec77573a375fabc69e6953c0822c1999c94a b366260daa2c2a4f963475a8b20f882c7b99518a
+
+		15)
+		cls; cd C:\Users\quocb\quocbui\Studies\research\GithubRepo\requirement_descriptions_and_bug_counts\Mozilla; ..\venv311\Scripts\Activate.ps1; python .\GitModifiedFilesFunctionsExtractor.py --table-number 15 --repo-path C:\Users\quocb\quocbui\Studies\research\GithubRepo\firefox_workers\firefox-worker-15 --commit-fie-extract-timeout-seconds 900 b3663a8ea9dc8ed39f9b7a5e2a40ca224008de9e c027beb0e6401896d4147b1f03c993b66bc7592d
+
+		16)
+		cls; cd C:\Users\quocb\quocbui\Studies\research\GithubRepo\requirement_descriptions_and_bug_counts\Mozilla; ..\venv311\Scripts\Activate.ps1; python .\GitModifiedFilesFunctionsExtractor.py --table-number 16 --repo-path C:\Users\quocb\quocbui\Studies\research\GithubRepo\firefox_workers\firefox-worker-16 --commit-fie-extract-timeout-seconds 900 c027cced5225557994390115bba3721665c1804c ccde746330af69346a3a8fc30c62d08bf657cde9
+
+		17)
+		cls; cd C:\Users\quocb\quocbui\Studies\research\GithubRepo\requirement_descriptions_and_bug_counts\Mozilla; ..\venv311\Scripts\Activate.ps1; python .\GitModifiedFilesFunctionsExtractor.py --table-number 17 --repo-path C:\Users\quocb\quocbui\Studies\research\GithubRepo\firefox_workers\firefox-worker-17 --commit-fie-extract-timeout-seconds 900 ccde7a70c46469b463a441484fd848e5f78c9af2 d9a34378fd785833b17b271b0df249ba092c7148
+
+		18)
+		cls; cd C:\Users\quocb\quocbui\Studies\research\GithubRepo\requirement_descriptions_and_bug_counts\Mozilla; ..\venv311\Scripts\Activate.ps1; python .\GitModifiedFilesFunctionsExtractor.py --table-number 18 --repo-path C:\Users\quocb\quocbui\Studies\research\GithubRepo\firefox_workers\firefox-worker-18 --commit-fie-extract-timeout-seconds 900 d9a36ce13afffff8d7f13c5d20a91016585ea9af e66e854db4603995a9b8a2734cddbb883bea1f89
+
+		19)
+		cls; cd C:\Users\quocb\quocbui\Studies\research\GithubRepo\requirement_descriptions_and_bug_counts\Mozilla; ..\venv311\Scripts\Activate.ps1; python .\GitModifiedFilesFunctionsExtractor.py --table-number 19 --repo-path C:\Users\quocb\quocbui\Studies\research\GithubRepo\firefox_workers\firefox-worker-19 --commit-fie-extract-timeout-seconds 900 e66e99d799aabb3d4f2707ff0ee3ed95ecdadfe1 f338f202b3caed032def63f433c89f3c324e8f74
+
+		20)
+		cls; cd C:\Users\quocb\quocbui\Studies\research\GithubRepo\requirement_descriptions_and_bug_counts\Mozilla; ..\venv311\Scripts\Activate.ps1; python .\GitModifiedFilesFunctionsExtractor.py --table-number 20 --repo-path C:\Users\quocb\quocbui\Studies\research\GithubRepo\firefox_workers\firefox-worker-20 --commit-fie-extract-timeout-seconds 900 f338fe23e2ae8a89165e74c3ac171ee848f86dc9 fffffe7e0e643f1b8d49fc8b79fac6645220e3fb
+
+		*/
+
+		-- Validate Modified Files:
+		select fi.*
+		from FixFox_v3.dbo.Changeset_Files fi
+		inner join HgGit_Mappings m on m.Hg_Changeset_ID = fi.Changeset_Hash_ID 
+		--inner join FixFox_v3.dbo.Changeset_Modified_Functions func on func.Changeset_File_Unique_Hash = fi.Unique_Hash
+		where m.Git_Commit_ID='80254c44d838624cddfcd1210b3d3f36c133c23b'
+		order by File_Status
+
+		select * from Modified_Files_1
+		order by File_Status
+
+		-- Validate Modified Functions:
+		select func.*, fi.Previous_File_Name, fi.Updated_File_Name
+		from FixFox_v3.dbo.Changeset_Files fi
+		inner join HgGit_Mappings m on m.Hg_Changeset_ID = fi.Changeset_Hash_ID 
+		inner join FixFox_v3.dbo.Changeset_Modified_Functions func on func.Changeset_File_Unique_Hash = fi.Unique_Hash
+		where m.Git_Commit_ID='80254c44d838624cddfcd1210b3d3f36c133c23b'
+		order by function_name
+
+		select Modified_Files_1.File_Type,
+			Modified_Files_1.Previous_File_Name,
+			Modified_Functions_1.Function_Name,
+			Modified_Functions_1.Function_Arguments
+		from Modified_Functions_1
+		left join Modified_Files_1 on Modified_Files_1.Unique_Hash = Modified_Functions_1.Modified_File_Unique_Hash
+		order by function_name
+
+		/*
+		(aURI, aOriginalURI, aDocURI, aReferrerURI, aReferrerPolicy, aAPIRedirectToURI, aTopWindowURI, aLoadFlags, requestHeaders, requestMethod, uploadStream, uploadStreamHasHeaders, priority, classOfService, redirectionLimit, allowSTS, thirdPartyFlags, doResumeAt, startPos, entityID, chooseApplicationCache, appCacheClientID, allowSpdy, allowAltSvc, beConservative, tlsFlags, aLoadInfoArgs, aSynthesizedResponseHead, aSecurityInfoSerialization, aCacheKey, aRequestContextID, aCorsPreflightArgs, aInitialRwin, aBlockAuthPrompt, aSuspendAfterSynthesizeResponse, aAllowStaleCacheContent, aContentTypeHint, aCorsMode, aRedirectMode, aChannelId, aContentWindowId, aPreferredAlternativeType, aTopLevelOuterContentWindowId, aLaunchServiceWorkerStart, aLaunchServiceWorkerEnd, aDispatchFetchEventStart, aDispatchFetchEventEnd, aHandleFetchEventStart, aHandleFetchEventEnd, aForceMainDocumentChannel)
+		*/
+
+/*---------------------- UNIMPORTANT NOTES--------------------------*/
+/*---------------------- UNIMPORTANT NOTES--------------------------*/
+/*---------------------- UNIMPORTANT NOTES--------------------------*/
+/*---------------------- UNIMPORTANT NOTES--------------------------*/
+/*---------------------- UNIMPORTANT NOTES--------------------------*/
+
+
 ------------------------------------------------------------------------
 
 **) Create [Modified_Functions] and [Modified_Files]
@@ -570,176 +711,228 @@ Notes:
 		TODO ACTION: Update the codes to collected modified files and modified functions if it associated to a particular bugs.
 		
 ------------------------------------------------------------------------
+**) Run Ollama LLM to convert bug descriptions into User-story and Test Acceptance formats:
+Run script to create new table [qwen3_8b_bug_descriptions]
+
+CREATE TABLE [dbo].[qwen3_8b_bug_descriptions](
+	[Bug_ID] [int] NOT NULL,
+	[Who_What_Why] [varchar](max) NULL,
+	[Given_When_Then] [varchar](max) NULL,
+ CONSTRAINT [PK_qwen3_8b_bug_descriptions] PRIMARY KEY CLUSTERED 
+(
+	[Bug_ID] ASC
+)WITH (PAD_INDEX = OFF, STATISTICS_NORECOMPUTE = OFF, IGNORE_DUP_KEY = OFF, ALLOW_ROW_LOCKS = ON, ALLOW_PAGE_LOCKS = ON, OPTIMIZE_FOR_SEQUENTIAL_KEY = OFF) ON [PRIMARY]
+) ON [PRIMARY] TEXTIMAGE_ON [PRIMARY]
+GO
+
+Run Python: `OllamaMozillaBugDescriptionConverter.py` using command line:
+cd C:\Users\quocb\quocbui\Studies\research\GithubRepo\requirement_descriptions_and_bug_counts\Mozilla; ..\venv311\Scripts\Activate.ps1; python C:\Users\quocb\quocbui\Studies\research\GithubRepo\requirement_descriptions_and_bug_counts\Mozilla\MozillaBugDescriptionsConverter_qwen3_8b.py --limit 10000
+
+Why some records failed?
+-> Not written in English language.
+
+------------------------------------------------------------------------
+**) Back to table [Changesets], we set the [is_merge] column to 1 if the git has more than one parent_IDs. Note that, before the update, [is_merge] columns are all NULL
+
+I used this query to get all the Git commits that have 2 or more parent IDs:
+	;with q1 as (
+		select Git_Commit_ID, [Name]
+		from GitCommit_Properties
+		where [Name]='Parent ID'
+	)
+	select Git_Commit_ID, count(Git_Commit_ID) as [Number of parent IDs]
+	from q1
+	group by Git_Commit_ID having count(Git_Commit_ID) >= 2
+	order by [Number of parent IDs] desc
 
 
+Query to update:
+;with q1 as (
+    select Git_Commit_ID, [Name]
+    from GitCommit_Properties
+    where [Name]='Parent ID'
+),
+q2 as (
+select distinct Git_Commit_ID
+from q1
+group by Git_Commit_ID having count(Git_Commit_ID) >= 2
+)
+update c
+set is_merge = 1
+from Changesets c
+inner join HgGit_Mappings on HgGit_Mappings.Hg_Changeset_ID = c.Hash_Id
+inner join q2 on q2.Git_Commit_ID = HgGit_Mappings.Git_Commit_ID
+where c.is_merge is null
 
+Result:
+(27678 rows affected)
 
+Now updated the rest of the records to is_merge = 0:
+update Changesets
+set is_merge = 0
+where is_merge is null
 
+Result:
+(801702 rows affected)
 
+------------------------------------------------------------------------
+**) Build groundtruth dataset by running `BuildGroundTruthDataset.py`, here is the result after the run:
 
+			(venv311) PS C:\Users\quocb\quocbui\Studies\research\GithubRepo\requirement_descriptions_and_bug_counts> python .\Mozilla\BuildGroundTruthDataset.py --sample-size 1000 --seed 42 --output ground_truth_1000.csv
+			[09/16/2026 21:10:22] Fetching candidate bugs from [MozillaDataSet2026] ...
+			[09/16/2026 21:10:33] Candidate bugs: 67,799 | candidate file rows: 793,375
+			[09/16/2026 21:10:33]   population[C] = 18,189 files (2.29%)
+			[09/16/2026 21:10:33]   population[C++] = 311,775 files (39.30%)
+			[09/16/2026 21:10:33]   population[Java] = 6,366 files (0.80%)
+			[09/16/2026 21:10:33]   population[JavaScript] = 397,513 files (50.10%)
+			[09/16/2026 21:10:33]   population[Python] = 59,532 files (7.50%)
+			[09/16/2026 21:10:33]   pool[C] = 597 bugs -> quota 23
+			[09/16/2026 21:10:33]   pool[C++] = 29,520 bugs -> quota 393
+			[09/16/2026 21:10:33]   pool[Java] = 672 bugs -> quota 8
+			[09/16/2026 21:10:33]   pool[JavaScript] = 29,459 bugs -> quota 501
+			[09/16/2026 21:10:33]   pool[Python] = 7,551 bugs -> quota 75
+			[09/16/2026 21:10:33] Selected 1,000 distinct bug IDs.
 
+			File_Type     Pop. files    Pop. %  Sample files  Sample %
+			----------------------------------------------------------
+			C                 18,189     2.29%           260     3.16%
+			C++              311,775    39.30%         2,676    32.49%
+			Java               6,366     0.80%            87     1.06%
+			JavaScript       397,513    50.10%         4,799    58.27%
+			Python            59,532     7.50%           414     5.03%
+			----------------------------------------------------------
+			TOTAL            793,375   100.00%         8,236   100.00%
 
+			[09/16/2026 21:10:33] Wrote ground truth dataset to: ground_truth_1000.csv
+			[09/16/2026 21:10:33] PROGRAM FINISHED. EXIT!
 
+			The csv is stored in: C:\Users\quocb\quocbui\Studies\research\GithubRepo\requirement_descriptions_and_bug_counts
 
+			------------------------------------------------------------------------
+			------------------------------------------------------------------------
+			------------------------------------------------------------------------
+			------------------------------------------------------------------------
+			------------------------------------------------------------------------
+			
+			(venv311) PS C:\Users\quocb\quocbui\Studies\research\GithubRepo\requirement_descriptions_and_bug_counts\Mozilla> python BuildGroundTruthDataset.py --database MozillaDataSet2026 --sample-size 500 --seed 42 --output ground_truth_500.csv 
+			[10/20/2026 18:48:41] Fetching candidate bugs from [MozillaDataSet2026] ...
+			[10/20/2026 18:48:54] Candidate bugs: 67,799 | candidate file rows: 793,375
+			[10/20/2026 18:48:54]   population[C] = 18,189 files (2.29%)
+			[10/20/2026 18:48:54]   population[C++] = 311,775 files (39.30%)
+			[10/20/2026 18:48:54]   population[Java] = 6,366 files (0.80%)
+			[10/20/2026 18:48:54]   population[JavaScript] = 397,513 files (50.10%)
+			[10/20/2026 18:48:54]   population[Python] = 59,532 files (7.50%)
+			[10/20/2026 18:48:54]   pool[C] = 597 bugs -> quota 11
+			[10/20/2026 18:48:54]   pool[C++] = 29,520 bugs -> quota 196
+			[10/20/2026 18:48:54]   pool[Java] = 672 bugs -> quota 4
+			[10/20/2026 18:48:54]   pool[JavaScript] = 29,459 bugs -> quota 251
+			[10/20/2026 18:48:54]   pool[Python] = 7,551 bugs -> quota 38
+			[10/20/2026 18:48:54] Selected 500 distinct bug IDs.
 
+			File_Type     Pop. files    Pop. %  Sample files  Sample %
+			----------------------------------------------------------
+			C                 18,189     2.29%           223     5.22%
+			C++              311,775    39.30%         1,738    40.71%
+			Java               6,366     0.80%            15     0.35%
+			JavaScript       397,513    50.10%         2,113    49.50%
+			Python            59,532     7.50%           180     4.22%
+			----------------------------------------------------------
+			TOTAL            793,375   100.00%         4,269   100.00%
 
+			[10/20/2026 18:48:54] Wrote ground truth dataset to: ground_truth_500.csv
+			[10/20/2026 18:48:54] PROGRAM FINISHED. EXIT!
 
+------------------------------------------------------------------------
+**) Compute some data from queries based on Rayhan note:
+```
+Steps to identify the Requirements and their associated Vulnerabilities and also the relevant file and function level information:
+1.	For all the bug ids found from the Security repository, look for regressed by fields in Bugzilla from the Issue page of that bug.
+2.	If there is bug ID listed on the Regressed by field, then identify if the Bug ID is tagged as Enhancement Bugs.( we only need to collect bugs that are tagged as Enhance ment issues and we consider them as our Requirements)
+3.	Next, collect both the modified file and function lists for both the issues associated with CVE and the enhancement bugs listed in the regressed by fields.
+4.	Then create our final dataset the will contain the regressed by bugs (its ID, title and bug description, modified file and modified functions) which we consider as our requirements and the bugs from the security repository (bug ID, title, Description, modified file, modified functions, associated CVE ID(aliases field), CVE Title (from CVE Details))
+5.	We might need to do some more processing once we have these information.
+```
 
-
-
-
-
-
-
-
-
-select * from [Changeset_Properties] order by [Hg_Changeset_ID]
-
-select top 100 * from [Changesets]
-where 1=1
-and (is_merge is not null
-	or backed_out is not null
-	or is_backout_changeset is not null)
-
-/*
-delete [Changeset_Properties]
-
-update [Changesets]
-set is_merge=null, backed_out=null, is_backout_changeset=null, [description]=null
-where is_merge is not null
-	or backed_out is not null
-	or is_backout_changeset is not null
-	or is_backout_changeset is not null
-*/
-
-
-
-
-/* -------------------------------------- */
-/* -------------------------------------- */
-/* -------------------------------------- */
-/* KEEP TRACK OF `GitCommitsDetailsExtractor.py */
-
-/*
-update GitCommitList
-	set backed_out=null, is_backout_commit=null, [Description]=null
-where [Description] is not null
-	or backed_out is not null
-	or is_backout_commit is not null;
-
-delete from GitCommit_Properties where [Name] <> 'Parent ID';
+/* List all enhacement ticket IDs, its bugs, and vulnerabilities Filter enhacement ticket IDs those have regressed bugs, and at least one git commit that mentioned in the git commit title.
+select distinct regressedBy.ID as 'Enhacement Ticket ID'
+	,regressedBy.Alias
+	,bmm.Bug_Id
+	,vul.*
+from Bugs_MSFA_Mappings bmm
+inner join Bug_Properties bp on bp.Bug_ID = bmm.Bug_Id
+	and [Name] = 'regressed_by'
+inner join Bugs regressedBy on regressedBy.ID = bp.[Value]
+	and regressedBy.[Type] = 'enhancement'
+inner join GitCommit_Properties gp on gp.[Value] = regressedBy.ID
+	and gp.[Name] = 'Bug ID Mentioned'
+inner join MSFA_Vulnerabilities vul on vul.MFSA_Version = bmm.MFSA_version
+order by regressedBy.ID, bmm.Bug_Id, vul.MFSA_Version, vul.CVE
 --*/
 
+/* List of modified files for each Enhacement Ticket ID
+select distinct regressedBy.ID as 'Enhacement Ticket ID'
+	,mfile.*
+from Bugs_MSFA_Mappings bmm
+inner join Bug_Properties bp on bp.Bug_ID = bmm.Bug_Id
+	and [Name] = 'regressed_by'
+inner join Bugs regressedBy on regressedBy.ID = bp.[Value]
+	and regressedBy.[Type] = 'enhancement'
+inner join GitCommit_Properties gp on gp.[Value] = regressedBy.ID
+	and gp.[Name] = 'Bug ID Mentioned'
+inner join GitCommitList gcl on gcl.Git_Commit_ID = gp.Git_Commit_ID
+	and gcl.is_backout_commit = 0
+	and gcl.is_merge = 0
+	and gcl.is_backout_commit = 0
+inner join Modified_Files mfile on mfile.Git_commit_ID = gp.Git_Commit_ID
+	and mfile.File_Type in('C++', 'C', 'Java', 'JavaScript', 'Python')
+order by regressedBy.ID, mfile.Git_commit_ID, mfile.File_Type
+--*/
 
-select count(*)
-from GitCommitList
-where backed_out is not null
-or is_backout_commit is not null
-or Description is not null;
+/* List of modified functions for each Enhacement Ticket ID
+select distinct regressedBy.ID as 'Enhacement Ticket ID'
+	,mfile.Previous_File_Name
+	,mfile.Updated_File_Name
+	,mfunc.Function_Name
+	,mfunc.Function_Arguments
+from Bugs_MSFA_Mappings bmm
+inner join Bug_Properties bp on bp.Bug_ID = bmm.Bug_Id
+	and [Name] = 'regressed_by'
+inner join Bugs regressedBy on regressedBy.ID = bp.[Value]
+	and regressedBy.[Type] = 'enhancement'
+inner join GitCommit_Properties gp on gp.[Value] = regressedBy.ID
+	and gp.[Name] = 'Bug ID Mentioned'
+inner join GitCommitList gcl on gcl.Git_Commit_ID = gp.Git_Commit_ID
+	and gcl.is_backout_commit = 0
+	and gcl.is_merge = 0
+	and gcl.is_backout_commit = 0
+inner join Modified_Files mfile on mfile.Git_commit_ID = gp.Git_Commit_ID
+	and mfile.File_Type in('C++', 'C', 'Java', 'JavaScript', 'Python')
+inner join Modified_Functions mfunc on mfunc.Modified_File_Unique_Hash = mfile.Unique_Hash
+--*/
 
-select count(*) from GitCommit_Properties where [Name] <> 'Parent ID'
-
-select count(*) from GitCommitList where [Description] is null;
-
-
-
-/* Tasks for running: GitCommitsDetailsExtractor.py
-hg log -r 0334ef8f35936652177399455de986837245a7c6 --debug --cwd C:\Users\quocb\quocbui\Studies\research\GithubRepo\firefox_mercurial
-
-950,351 / 20 tasks = 47,517.55
-
-1)
-cls; cd C:\Users\quocb\quocbui\Studies\research\GithubRepo\requirement_descriptions_and_bug_counts\Mozilla; ..\venv311\Scripts\Activate.ps1; python .\GitModifiedFilesFunctionsExtractor.py --table-number 1 --repo-path C:\Users\quocb\quocbui\Studies\research\GithubRepo\firefox_workers\firefox-worker-01 --commit-fie-extract-timeout-seconds 900 00000163a890eb9f05f98c4084cd07846aa7cbf0 0cc73f8e55a9781a93769b17be8a0571064430b7
-
-2)
-cls; cd C:\Users\quocb\quocbui\Studies\research\GithubRepo\requirement_descriptions_and_bug_counts\Mozilla; ..\venv311\Scripts\Activate.ps1; python .\GitModifiedFilesFunctionsExtractor.py --table-number 2 --repo-path C:\Users\quocb\quocbui\Studies\research\GithubRepo\firefox_workers\firefox-worker-02 --commit-fie-extract-timeout-seconds 900 0cc74bd4fdf7264f9d9bb6fe22f9691f8b5ca329 19912dd349bc1ea6e10719d7366cfd233dc483e9
-
-3)
-cls; cd C:\Users\quocb\quocbui\Studies\research\GithubRepo\requirement_descriptions_and_bug_counts\Mozilla; ..\venv311\Scripts\Activate.ps1; python .\GitModifiedFilesFunctionsExtractor.py --table-number 3 --repo-path C:\Users\quocb\quocbui\Studies\research\GithubRepo\firefox_workers\firefox-worker-03 --commit-fie-extract-timeout-seconds 900 19913513b11917d9f63e21dc998623da68cebc30 265c36385d525e4eb9b5fd81481aa84b89dc773c
-
-4)
-cls; cd C:\Users\quocb\quocbui\Studies\research\GithubRepo\requirement_descriptions_and_bug_counts\Mozilla; ..\venv311\Scripts\Activate.ps1; python .\GitModifiedFilesFunctionsExtractor.py --table-number 4 --repo-path C:\Users\quocb\quocbui\Studies\research\GithubRepo\firefox_workers\firefox-worker-04 --commit-fie-extract-timeout-seconds 900 265c42d16f47111316f6a79e5308a0d6ac5d9f71 334746cbcbd83d2bea6bf70ba1227f5a096182ad
-
-5)
-cls; cd C:\Users\quocb\quocbui\Studies\research\GithubRepo\requirement_descriptions_and_bug_counts\Mozilla; ..\venv311\Scripts\Activate.ps1; python .\GitModifiedFilesFunctionsExtractor.py --table-number 5 --repo-path C:\Users\quocb\quocbui\Studies\research\GithubRepo\firefox_workers\firefox-worker-05 334747c45b1c6eb1010d8e30127ffc2d27436466 40185bf58a4c36b05414012f8a8cf93591df0318 --commit-fie-extract-timeout-seconds 900
+------------------------------------------------------------------------
 
 
-6)
-cls; cd C:\Users\quocb\quocbui\Studies\research\GithubRepo\requirement_descriptions_and_bug_counts\Mozilla; ..\venv311\Scripts\Activate.ps1; python .\GitModifiedFilesFunctionsExtractor.py --table-number 6 --repo-path C:\Users\quocb\quocbui\Studies\research\GithubRepo\firefox_workers\firefox-worker-06 --commit-fie-extract-timeout-seconds 900 4018908a051075d4f4b86bbea444f95ce6606720 4ccc349d24391ff087f82b6ab7fd7a33bd934580
 
 
-7)
-cls; cd C:\Users\quocb\quocbui\Studies\research\GithubRepo\requirement_descriptions_and_bug_counts\Mozilla; ..\venv311\Scripts\Activate.ps1; python .\GitModifiedFilesFunctionsExtractor.py --table-number 7 --repo-path C:\Users\quocb\quocbui\Studies\research\GithubRepo\firefox_workers\firefox-worker-07  --commit-fie-extract-timeout-seconds 900 4ccc3b9f19d30a0b97160982ea6bc47c87ffe211 599195b8366698f0ad22fa659d2d65c640d033bd
+Metadata:
+- Number distinct unit of information from original description
+	-> Look inside the links
+- Number of additional distinct unit of information from comments (Not present in original description)
+	-> If comments contains links, don't need to look into them.
+- Presence of WWY from original descriptions
+- Presence of GWT from original descriptions
+- Presence of WWY from comments
+- Presence of GWT from comments
+- is this Atomic Requirements? (Yes/No)
+	- if No, then how many
+- Datetime of the first comment and the very last comment
+- Datetime of the very last comment
+- List of Distinct user Ids
 
 
-8)
-cls; cd C:\Users\quocb\quocbui\Studies\research\GithubRepo\requirement_descriptions_and_bug_counts\Mozilla; ..\venv311\Scripts\Activate.ps1; python .\GitModifiedFilesFunctionsExtractor.py --table-number 8 --repo-path C:\Users\quocb\quocbui\Studies\research\GithubRepo\firefox_workers\firefox-worker-08 --commit-fie-extract-timeout-seconds 900 5991ada2f7b96d8632f062e12237c88440987bda 666be0ef8dcd7c551e206f83a149842f58e1e23c
-
-9)
-cls; cd C:\Users\quocb\quocbui\Studies\research\GithubRepo\requirement_descriptions_and_bug_counts\Mozilla; ..\venv311\Scripts\Activate.ps1; python .\GitModifiedFilesFunctionsExtractor.py --table-number 9 --repo-path C:\Users\quocb\quocbui\Studies\research\GithubRepo\firefox_workers\firefox-worker-09 --commit-fie-extract-timeout-seconds 900 666be89e13cfe3653580964b167a44526d9430ed 73253276b1fde5042ee80f2ca522099c1fd317b3
-
-10)
-cls; cd C:\Users\quocb\quocbui\Studies\research\GithubRepo\requirement_descriptions_and_bug_counts\Mozilla; ..\venv311\Scripts\Activate.ps1; python .\GitModifiedFilesFunctionsExtractor.py --table-number 10 --repo-path C:\Users\quocb\quocbui\Studies\research\GithubRepo\firefox_workers\firefox-worker-10 --commit-fie-extract-timeout-seconds 900 73253dc56e1a2200022348d7826c9e2ce561f9cf 801618ee73ae05fa6edadb04d497bff36fee557e
-
-11)
-cls; cd C:\Users\quocb\quocbui\Studies\research\GithubRepo\requirement_descriptions_and_bug_counts\Mozilla; ..\venv311\Scripts\Activate.ps1; python .\GitModifiedFilesFunctionsExtractor.py --table-number 11 --repo-path C:\Users\quocb\quocbui\Studies\research\GithubRepo\firefox_workers\firefox-worker-11 --commit-fie-extract-timeout-seconds 300 801629c58e13d44fe241c870a357bc8863e7904f 8ce103a290d6611d74cfd772bd36b0c1d90258e7
-
-12)
-cls; cd C:\Users\quocb\quocbui\Studies\research\GithubRepo\requirement_descriptions_and_bug_counts\Mozilla; ..\venv311\Scripts\Activate.ps1; python .\GitModifiedFilesFunctionsExtractor.py --table-number 12 --repo-path C:\Users\quocb\quocbui\Studies\research\GithubRepo\firefox_workers\firefox-worker-12 --commit-fie-extract-timeout-seconds 300 8ce107be1f46128f20ea8cb9b577564cb92d8abb 99b0cd2ece3f5e6f88c5b08e990def54c529f493
-
-13)
-cls; cd C:\Users\quocb\quocbui\Studies\research\GithubRepo\requirement_descriptions_and_bug_counts\Mozilla; ..\venv311\Scripts\Activate.ps1; python .\GitModifiedFilesFunctionsExtractor.py --table-number 13 --repo-path C:\Users\quocb\quocbui\Studies\research\GithubRepo\firefox_workers\firefox-worker-13 --commit-fie-extract-timeout-seconds 300 99b0d82c4a92a28d894d4106cb03b8bc514b9313 a689ea0aceca7a9662c7e0fd46a5426072ebebb1
-
-14)
-cls; cd C:\Users\quocb\quocbui\Studies\research\GithubRepo\requirement_descriptions_and_bug_counts\Mozilla; ..\venv311\Scripts\Activate.ps1; python .\GitModifiedFilesFunctionsExtractor.py --table-number 14 --repo-path C:\Users\quocb\quocbui\Studies\research\GithubRepo\firefox_workers\firefox-worker-14 --commit-fie-extract-timeout-seconds 300 a689ec77573a375fabc69e6953c0822c1999c94a b366260daa2c2a4f963475a8b20f882c7b99518a
-
-15)
-cls; cd C:\Users\quocb\quocbui\Studies\research\GithubRepo\requirement_descriptions_and_bug_counts\Mozilla; ..\venv311\Scripts\Activate.ps1; python .\GitModifiedFilesFunctionsExtractor.py --table-number 15 --repo-path C:\Users\quocb\quocbui\Studies\research\GithubRepo\firefox_workers\firefox-worker-15 --commit-fie-extract-timeout-seconds 300 b3663a8ea9dc8ed39f9b7a5e2a40ca224008de9e c027beb0e6401896d4147b1f03c993b66bc7592d
-
-16)
-cls; cd C:\Users\quocb\quocbui\Studies\research\GithubRepo\requirement_descriptions_and_bug_counts\Mozilla; ..\venv311\Scripts\Activate.ps1; python .\GitModifiedFilesFunctionsExtractor.py --table-number 16 --repo-path C:\Users\quocb\quocbui\Studies\research\GithubRepo\firefox_workers\firefox-worker-16 --commit-fie-extract-timeout-seconds 300 c027cced5225557994390115bba3721665c1804c ccde746330af69346a3a8fc30c62d08bf657cde9
-
-17)
-cls; cd C:\Users\quocb\quocbui\Studies\research\GithubRepo\requirement_descriptions_and_bug_counts\Mozilla; ..\venv311\Scripts\Activate.ps1; python .\GitModifiedFilesFunctionsExtractor.py --table-number 17 --repo-path C:\Users\quocb\quocbui\Studies\research\GithubRepo\firefox_workers\firefox-worker-17 --commit-fie-extract-timeout-seconds 900 ccde7a70c46469b463a441484fd848e5f78c9af2 d9a34378fd785833b17b271b0df249ba092c7148
-
-18)
-cls; cd C:\Users\quocb\quocbui\Studies\research\GithubRepo\requirement_descriptions_and_bug_counts\Mozilla; ..\venv311\Scripts\Activate.ps1; python .\GitModifiedFilesFunctionsExtractor.py --table-number 18 --repo-path C:\Users\quocb\quocbui\Studies\research\GithubRepo\firefox_workers\firefox-worker-18 --commit-fie-extract-timeout-seconds 300 d9a36ce13afffff8d7f13c5d20a91016585ea9af e66e854db4603995a9b8a2734cddbb883bea1f89
-
-19)
-cls; cd C:\Users\quocb\quocbui\Studies\research\GithubRepo\requirement_descriptions_and_bug_counts\Mozilla; ..\venv311\Scripts\Activate.ps1; python .\GitModifiedFilesFunctionsExtractor.py --table-number 19 --repo-path C:\Users\quocb\quocbui\Studies\research\GithubRepo\firefox_workers\firefox-worker-19 --commit-fie-extract-timeout-seconds 300 e66e99d799aabb3d4f2707ff0ee3ed95ecdadfe1 f338f202b3caed032def63f433c89f3c324e8f74
-
-20)
-cls; cd C:\Users\quocb\quocbui\Studies\research\GithubRepo\requirement_descriptions_and_bug_counts\Mozilla; ..\venv311\Scripts\Activate.ps1; python .\GitModifiedFilesFunctionsExtractor.py --table-number 20 --repo-path C:\Users\quocb\quocbui\Studies\research\GithubRepo\firefox_workers\firefox-worker-20 --commit-fie-extract-timeout-seconds 300 f338fe23e2ae8a89165e74c3ac171ee848f86dc9 fffffe7e0e643f1b8d49fc8b79fac6645220e3fb
-
-*/
-
--- Validate Modified Files:
-select fi.*
-from FixFox_v3.dbo.Changeset_Files fi
-inner join HgGit_Mappings m on m.Hg_Changeset_ID = fi.Changeset_Hash_ID 
---inner join FixFox_v3.dbo.Changeset_Modified_Functions func on func.Changeset_File_Unique_Hash = fi.Unique_Hash
-where m.Git_Commit_ID='80254c44d838624cddfcd1210b3d3f36c133c23b'
-order by File_Status
-
-select * from Modified_Files_1
-order by File_Status
-
--- Validate Modified Functions:
-select func.*, fi.Previous_File_Name, fi.Updated_File_Name
-from FixFox_v3.dbo.Changeset_Files fi
-inner join HgGit_Mappings m on m.Hg_Changeset_ID = fi.Changeset_Hash_ID 
-inner join FixFox_v3.dbo.Changeset_Modified_Functions func on func.Changeset_File_Unique_Hash = fi.Unique_Hash
-where m.Git_Commit_ID='80254c44d838624cddfcd1210b3d3f36c133c23b'
-order by function_name
-
-select Modified_Files_1.File_Type,
-	Modified_Files_1.Previous_File_Name,
-	Modified_Functions_1.Function_Name,
-	Modified_Functions_1.Function_Arguments
-from Modified_Functions_1
-left join Modified_Files_1 on Modified_Files_1.Unique_Hash = Modified_Functions_1.Modified_File_Unique_Hash
-order by function_name
-
-/*
-(aURI, aOriginalURI, aDocURI, aReferrerURI, aReferrerPolicy, aAPIRedirectToURI, aTopWindowURI, aLoadFlags, requestHeaders, requestMethod, uploadStream, uploadStreamHasHeaders, priority, classOfService, redirectionLimit, allowSTS, thirdPartyFlags, doResumeAt, startPos, entityID, chooseApplicationCache, appCacheClientID, allowSpdy, allowAltSvc, beConservative, tlsFlags, aLoadInfoArgs, aSynthesizedResponseHead, aSecurityInfoSerialization, aCacheKey, aRequestContextID, aCorsPreflightArgs, aInitialRwin, aBlockAuthPrompt, aSuspendAfterSynthesizeResponse, aAllowStaleCacheContent, aContentTypeHint, aCorsMode, aRedirectMode, aChannelId, aContentWindowId, aPreferredAlternativeType, aTopLevelOuterContentWindowId, aLaunchServiceWorkerStart, aLaunchServiceWorkerEnd, aDispatchFetchEventStart, aDispatchFetchEventEnd, aHandleFetchEventStart, aHandleFetchEventEnd, aForceMainDocumentChannel)
-*/
+TODO:
+- Doing some research to see if there are any research paper related to the concept of "Unit of Information" in RE
+- Otherwise, we can use Atomic Requirements
+- Pick some to myself work on it first.
+- Modify Python to reduce the datapoints (50 -> 100 -> 200 -> 300)

@@ -1,0 +1,142 @@
+https://dbdiagram.io/d/Mozilla2026-6a5cce9cc3a90dd98d6a3cdb
+
+
+Table "Bugs" {
+  "ID" int [not null]
+  "Bug_Title" varchar(1000)
+  "Alias" varchar(500)
+  "Product" varchar(100) [not null]
+  "Component" varchar(100)
+  "Type" varchar(50) [not null]
+  "Status" varchar(50) [not null]
+  "Resolution" varchar(50) [not null]
+  "Resolved_Comment_DateTime" datetime
+  "Bug_Description" varchar(MAX)
+  "User_Story" varchar(MAX)
+  "Severity" varchar(100)
+  "Priority" varchar(100)
+  "Last_Change_Time" datetime
+  "Inserted_On" datetime [not null]
+
+  Indexes {
+    ID [pk, name: "PK_Bugs_1"]
+  }
+}
+
+Table "Bug_Properties" {
+  "Unique_ID" varbinary(2000) [not null]
+  "Name" varchar(100) [not null]
+  "Bug_ID" int [not null]
+  "[Value]" varchar(MAX)
+
+  Indexes {
+    Unique_ID [pk, name: "PK_Bug_Properties"]
+  }
+}
+Ref: Bug_Properties.Bug_ID > Bugs.ID
+
+/////////////////////////////////////////
+
+Table "Changesets" {
+  "Hash_Id" varchar(40) [not null]
+  "Changeset_Summary" varchar(MAX)
+  "Changeset_Datetime" varchar(200) [not null]
+  "Inserted_On" datetime [not null]
+  "is_merge" bit
+  "backed_out" bit
+  "is_backout_changeset" bit
+  "Description" varchar(MAX)
+
+  Indexes {
+    Hash_Id [pk, name: "PK_Bugzilla_Mozilla_ShortLog_localmachine"]
+  }
+}
+
+/////////////////////////////////////////
+
+Table "GitCommitList" {
+  "Git_Commit_ID" varchar(40) [not null]
+  "Date" datetime
+  "Message" varchar(MAX)
+  "is_merge" bit [not null]
+  "backed_out" bit
+  "is_backout_commit" bit
+  "Description" varchar(MAX)
+
+  Indexes {
+    Git_Commit_ID [pk, name: "PK_GitCommitList"]
+  }
+}
+
+
+Table "GitCommit_Properties" {
+  "Unique_ID" varbinary(50) [not null]
+  "Git_Commit_ID" varchar(40) [not null]
+  "Name" varchar(100) [not null]
+  "[Value]" varchar(5000) [not null]
+
+  Indexes {
+    Unique_ID [pk, name: "PK_GitCommit_Properties"]
+  }
+}
+Ref: GitCommit_Properties.Git_Commit_ID > GitCommitList.Git_Commit_ID
+Ref: GitCommit_Properties."[Value]" > Bugs.ID // GitCommit_Properties.Name = 'Bug ID Mentioned'
+
+Table "Modified_Files" {
+  "Git_commit_ID" varchar(40) [not null]
+  "Previous_File_Name" varchar(1000) [not null]
+  "Updated_File_Name" varchar(1000) [not null]
+  "File_Type" varchar(20) [not null]
+  "File_Status" varchar(100) [not null]
+  "Unique_Hash" varbinary(50) [not null]
+
+  Indexes {
+    Unique_Hash [pk, name: "PK_Modified_Files"]
+  }
+}
+Ref: Modified_Files.Git_commit_ID > GitCommitList.Git_Commit_ID
+
+
+Table "Modified_Functions" {
+  "Unique_Hash" varbinary(50) [not null]
+  "Modified_File_Unique_Hash" varbinary(50) [not null]
+  "Function_Name" varchar(1000) [not null]
+  "Function_Arguments" varchar(5000) [not null]
+
+  Indexes {
+    Unique_Hash [pk, name: "PK_Modified_Functions"]
+  }
+}
+Ref: Modified_Functions.Modified_File_Unique_Hash > Modified_Files.Unique_Hash
+
+Table "MSFA_Details" {
+  "MSFA_version" varchar(15) [not null]
+  "Title" varchar(200)
+  "Announced" varchar(30)
+  "Impact" varchar(100)
+  "Fixed_In" varchar(MAX)
+
+  Indexes {
+    MSFA_version [pk, name: "PK_MSFA_Details"]
+  }
+}
+
+Table "Bugs_MSFA_Mappings" {
+  "Bug_Id" int [not null]
+  "MFSA_version" varchar(15) [not null]
+
+  Indexes {
+    (Bug_Id, MFSA_version) [pk, name: "PK_Bugs_MSFA_Mappings"]
+  }
+}
+Ref: Bugs_MSFA_Mappings.Bug_Id < Bugs.ID
+Ref: Bugs_MSFA_Mappings.MFSA_version - MSFA_Details.MSFA_version
+
+Table "MSFA_Vulnerabilities" {
+  "MFSA_Version" varchar(15) [not null]
+  "Impact" varchar(100) [not null]
+  "CVE" varchar(20)
+  "Title" varchar(200)
+  "Description" nvarchar(MAX)
+}
+Ref: MSFA_Vulnerabilities.MFSA_Version - MSFA_Details.MSFA_version

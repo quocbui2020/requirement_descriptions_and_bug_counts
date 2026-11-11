@@ -206,6 +206,12 @@ DEFAULT_COMMIT_FILE_EXTRACT_TIMEOUT_SECONDS = 0.0
 COMMIT_FILE_EXTRACT_WAIT_POLL_SECONDS = 0.1
 MANUAL_SKIP_HOTKEY_HINT = "Esc"
 
+# Commits to skip during extraction (add commit IDs here to exclude them from processing)
+COMMITS_TO_SKIP = {
+    "e5a134f73a75ee0761a943b840c3e9bd90861281",  # Skip this specific commit from collection
+    "288c53eb2b2e407f9b9dc521940b3aa114ef7c53" # create a new branch. It has 23,832 files changed
+}
+
 # VS Code breakpoint-friendly run mode:
 # - False: use normal command-line arguments
 # - True: use DEBUG_CLI_ARGS below (as if typed in terminal)
@@ -930,10 +936,11 @@ def _get_changed_methods_with_timeout(modified_file, commit_hash, repo_path, pre
 
 def _extract_function_records(modified_file, file_status, commit_hash=None, repo_path=None):
     records = []
+    skipped_file = False
     previous_file_name, updated_file_name = _get_pydriller_paths(modified_file)
 
     if not _should_extract_functions_for_file(previous_file_name, updated_file_name):
-        return records
+        return records, skipped_file
 
     anonymous_context = updated_file_name
     if not anonymous_context:
@@ -954,6 +961,7 @@ def _extract_function_records(modified_file, file_status, commit_hash=None, repo
     )
 
     if timed_out:
+        skipped_file = True
         clear_live_commit_status()
         target_file = updated_file_name or previous_file_name or "<unknown>"
         reason_text = changed_methods_error or f"Timeout after {COMMIT_FILE_EXTRACT_TIMEOUT_SECONDS}s"
@@ -963,7 +971,7 @@ def _extract_function_records(modified_file, file_status, commit_hash=None, repo
             f"skipping function extraction for this file"
         )
         changed_methods = None
-        return records
+        return records, skipped_file
     elif changed_methods_error and DEBUG_MODE:
         clear_live_commit_status()
         target_file = updated_file_name or previous_file_name or "<unknown>"
@@ -999,7 +1007,7 @@ def _extract_function_records(modified_file, file_status, commit_hash=None, repo
         seen.add(dedupe_key)
         deduped.append(record)
 
-    return deduped
+    return deduped, skipped_file
 
 
 def _extract_function_records_from_diff(modified_file, anonymous_name):
@@ -1411,6 +1419,7 @@ def get_commit_modified_data(commit_hash, repo_path):
 
             files = []
             recursion_skipped_files = 0
+            skipped_files = 0
 
             for modified_file in commit.modified_files:
                 file_status = _normalize_file_status(modified_file)
@@ -1420,14 +1429,17 @@ def get_commit_modified_data(commit_hash, repo_path):
                 file_type = _normalize_file_type(prev_name, updated_name)
                 function_records = []
                 try:
-                    function_records = _extract_function_records(
+                    function_records, function_extraction_skipped = _extract_function_records(
                         modified_file,
                         file_status,
                         commit_hash=commit_hash,
                         repo_path=repo_path,
                     )
+                    if function_extraction_skipped:
+                        skipped_files += 1
                 except RecursionError as rec_err:
                     recursion_skipped_files += 1
+                    skipped_files += 1
                     clear_live_commit_status()
                     print(
                         f"[{strftime('%H:%M:%S', localtime())}] [WARNING] [skip] fail to process '{target_file}' "
@@ -1448,6 +1460,7 @@ def get_commit_modified_data(commit_hash, repo_path):
                 "hash_id": commit.hash,
                 "files": files,
                 "recursion_skipped_files": recursion_skipped_files,
+                "skipped_files": skipped_files,
             }
 
         except Exception as e:
@@ -1607,6 +1620,9 @@ def persist_commit_data(commit_data):
                     file_type,
                 ):
                     inserted_files += 1
+                    # Commit immediately after each file insert so Unique_Hash (if DB-generated)
+                    # becomes visible for the subsequent SELECT query in the same transaction
+                    conn.commit()
 
                 if HAS_MODIFIED_FUNCTIONS_TABLE:
                     modified_file_unique_hash = get_modified_file_unique_hash(
@@ -1720,6 +1736,8 @@ def process_all_commits(
     total_files_inserted = 0
     total_functions_inserted = 0
     total_recursion_skipped_files = 0
+    total_skipped_files = 0
+    total_commits_with_skipped_files = 0
     failed_commits = []
 
     print(f"\n[{strftime('%H:%M:%S', localtime())}] [STEP 2/3] Processing commits...")
@@ -1738,6 +1756,12 @@ def process_all_commits(
             processed_commits_before_current = start_idx + (i - 1)
             set_live_progress(total_commits, processed_commits_before_current)
             print_live_commit_status(commit_hash)
+
+            # Skip commits that are in the COMMITS_TO_SKIP set
+            if commit_hash in COMMITS_TO_SKIP:
+                clear_live_commit_status()
+                print(f"[{strftime('%H:%M:%S', localtime())}] [INFO] Skipping commit (in COMMITS_TO_SKIP): {commit_hash}")
+                continue
 
             data = get_commit_modified_data(commit_hash, repo_path)
             if data is None:
@@ -1762,11 +1786,19 @@ def process_all_commits(
         set_live_progress(0, 0)
         print_progress_bar("DB Update", 0, len(extracted_batch) if extracted_batch else 1)
         batch_recursion_skipped_files = 0
+        batch_skipped_files = 0
+        batch_commits_with_skipped_files = 0
 
         for j, commit_data in enumerate(extracted_batch, 1):
             commit_recursion_skips = int(commit_data.get("recursion_skipped_files", 0) or 0)
+            commit_skipped_files = int(commit_data.get("skipped_files", 0) or 0)
             batch_recursion_skipped_files += commit_recursion_skips
+            batch_skipped_files += commit_skipped_files
             total_recursion_skipped_files += commit_recursion_skips
+            total_skipped_files += commit_skipped_files
+            if commit_skipped_files > 0:
+                batch_commits_with_skipped_files += 1
+                total_commits_with_skipped_files += 1
             success, inserted_files, inserted_functions = persist_commit_data(commit_data)
             if success:
                 total_db_success += 1
@@ -1784,8 +1816,12 @@ def process_all_commits(
             f"[{strftime('%H:%M:%S', localtime())}] [BATCH {batch_num}] Complete: "
             f"extracted={len(extracted_batch)} db_success={total_db_success} "
             f"files_inserted={total_files_inserted} functions_inserted={total_functions_inserted} "
+            f"batch_skipped_files={batch_skipped_files} "
+            f"batch_commits_with_skipped_files={batch_commits_with_skipped_files} "
             f"batch_recursion_skips={batch_recursion_skipped_files} "
-            f"total_recursion_skips={total_recursion_skipped_files}"
+            f"total_skipped_files={total_skipped_files} "
+            f"total_recursion_skips={total_recursion_skipped_files} "
+            f"total_commits_with_skipped_files={total_commits_with_skipped_files}"
         )
 
     print(f"\n[{strftime('%H:%M:%S', localtime())}] [STEP 3/3] Final Summary")
@@ -1797,6 +1833,8 @@ def process_all_commits(
     print(f"DB updates failed:             {total_db_failed}")
     print(f"Modified_Files inserted:       {total_files_inserted}")
     print(f"Modified_Functions inserted:   {total_functions_inserted}")
+    print(f"Skipped files:                 {total_skipped_files}")
+    print(f"Commits with skipped files:    {total_commits_with_skipped_files}")
     print(f"Function parse skips (recursion): {total_recursion_skipped_files}")
     print(f"Failed commits to replay:      {len(failed_commits)}")
 
@@ -1846,10 +1884,13 @@ def process_single_commit(repo_path, commit_hash, bypass_filters=False):
 
     success, inserted_files, inserted_functions = persist_commit_data(details)
     recursion_skipped_files = int(details.get("recursion_skipped_files", 0) or 0)
+    skipped_files = int(details.get("skipped_files", 0) or 0)
     if success:
         print(f"[{strftime('%H:%M:%S', localtime())}] [SUCCESS] Single commit processed")
         print(f"[{strftime('%H:%M:%S', localtime())}] [INFO] Modified_Files inserted: {inserted_files}")
         print(f"[{strftime('%H:%M:%S', localtime())}] [INFO] Modified_Functions inserted: {inserted_functions}")
+        print(f"[{strftime('%H:%M:%S', localtime())}] [INFO] Skipped files: {skipped_files}")
+        print(f"[{strftime('%H:%M:%S', localtime())}] [INFO] Commit has skipped file(s): {'yes' if skipped_files > 0 else 'no'}")
         print(f"[{strftime('%H:%M:%S', localtime())}] [INFO] Function parse skips (recursion): {recursion_skipped_files}")
     else:
         print(f"[{strftime('%H:%M:%S', localtime())}] [ERROR] Failed to persist single commit: {commit_hash}")
